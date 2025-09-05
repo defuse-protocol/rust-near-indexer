@@ -1,8 +1,6 @@
-use cached::Cached;
-
 use near_lake_framework::near_indexer_primitives::{self, near_primitives};
 
-use crate::types;
+use crate::{cache, types};
 
 const RECEIPTS_CLICKHOUSE_TABLE: &str = "receipts";
 
@@ -15,14 +13,14 @@ const RECEIPTS_CLICKHOUSE_TABLE: &str = "receipts";
 pub async fn handle_receipts(
     message: &near_indexer_primitives::StreamerMessage,
     client: &clickhouse::Client,
-    receipts_cache_arc: types::ReceiptsCacheArc,
+    receipts_cache_arc: cache::ReceiptsCacheArc,
 ) -> anyhow::Result<()> {
     let receipts = extract_receipts(message, receipts_cache_arc.clone()).await?;
 
     if let Err(err) =
         crate::database::insert_rows(client, RECEIPTS_CLICKHOUSE_TABLE, &receipts).await
     {
-        eprintln!("Error inserting rows into Clickhouse: {}", err);
+        tracing::error!("Error inserting rows into Clickhouse: {}", err);
         anyhow::bail!("Failed to insert rows into Clickhouse: {}", err)
     }
 
@@ -31,9 +29,9 @@ pub async fn handle_receipts(
 
 async fn extract_receipts(
     message: &near_indexer_primitives::StreamerMessage,
-    receipts_cache_arc: types::ReceiptsCacheArc,
+    receipts_cache_arc: cache::ReceiptsCacheArc,
 ) -> anyhow::Result<Vec<types::ReceiptRow>> {
-    let mut receipts_cache_lock = receipts_cache_arc.lock().await;
+    let receipts_cache_lock = receipts_cache_arc.lock().await;
     let block_height = message.block.header.height;
     let block_timestamp = message.block.header.timestamp;
     let block_hash = message.block.header.hash.to_string();
@@ -43,7 +41,7 @@ async fn extract_receipts(
         .filter_map(|shard| shard.chunk.as_ref())
         .flat_map(|chunk| chunk.receipts.iter().map(Clone::clone))
         .filter_map(|receipt| {
-            if let Some(_parent_tx_hash) = receipts_cache_lock.cache_get(&types::ReceiptOrDataId::ReceiptId(receipt.receipt_id)) {
+            if let Some(_parent_tx_hash) = receipts_cache_lock.get(&types::ReceiptOrDataId::ReceiptId(receipt.receipt_id)) {
                 Some(types::ReceiptRow{
                     block_height: block_height,
                     block_timestamp: block_timestamp,
@@ -56,7 +54,7 @@ async fn extract_receipts(
                         near_primitives::views::ReceiptEnumView::Action { ref actions, .. } => {
                             serde_json::to_string(
                                 &actions.iter().map(|action| types::Action::from(action)).collect::<Vec<types::Action>>()
-                            ).unwrap()
+                            ).expect("Failed to serialize actions for receipt")
                         },
                         near_primitives::views::ReceiptEnumView::Data { ref data, .. } => {
                             serde_json::to_string(data).unwrap()
@@ -71,7 +69,9 @@ async fn extract_receipts(
                     receipt.receiver_id.as_str(),
                     receipt.predecessor_id.as_str(),
                 ]) {
-                    println!("We don't watch for the this receipt but it is related to the account ids of interest, {}\n{:#?}", receipt.receipt_id, receipt);
+                    tracing::warn!("We don't watch for the this receipt but it is related to the account ids of interest, {}", receipt.receipt_id);
+                    tracing::debug!("{:#?}", receipt.receipt);
+                    crate::metrics::POTENTIAL_ASSET_MISS_TOTAL.with_label_values(&["receipts"]).inc();
                 }
 
                 None
@@ -80,5 +80,18 @@ async fn extract_receipts(
         .collect::<Vec<_>>();
 
     drop(receipts_cache_lock);
+    crate::metrics::ASSETS_IN_BLOCK_TOTAL
+        .with_label_values(&["receipts"])
+        .set(
+            message
+                .shards
+                .iter()
+                .filter_map(|shard| shard.chunk.as_ref())
+                .map(|chunk| chunk.receipts.len() as i64)
+                .sum(),
+        );
+    crate::metrics::ASSETS_IN_BLOCK_CAPTURED_TOTAL
+        .with_label_values(&["receipts"])
+        .set(receipts.len() as i64);
     Ok(receipts)
 }

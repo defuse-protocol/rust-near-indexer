@@ -1,8 +1,6 @@
-use cached::Cached;
-
 use near_lake_framework::near_indexer_primitives;
 
-use crate::types;
+use crate::{cache, handlers::events::parse_status, types};
 use tokio::try_join;
 
 const TRANSACTIONS_CLICKHOUSE_TABLE: &str = "transactions";
@@ -18,7 +16,7 @@ const TRANSACTIONS_CLICKHOUSE_TABLE: &str = "transactions";
 pub async fn handle_transactions(
     message: &near_indexer_primitives::StreamerMessage,
     client: &clickhouse::Client,
-    receipts_cache_arc: types::ReceiptsCacheArc,
+    receipts_cache_arc: cache::ReceiptsCacheArc,
 ) -> anyhow::Result<()> {
     let (transactions, transaction_execution_outcomes) = try_join!(
         extract_transactions(message, receipts_cache_arc.clone()),
@@ -29,13 +27,14 @@ pub async fn handle_transactions(
         crate::database::insert_rows(client, TRANSACTIONS_CLICKHOUSE_TABLE, &transactions,),
         crate::database::insert_rows(
             client,
-            "transaction_execution_outcomes",
+            super::execution_outcomes::EXECUTION_OUTCOMES_CLICKHOUSE_TABLE,
             &transaction_execution_outcomes,
         )
     ) {
         Ok((_res_transactions, _res_execution_outcomes)) => Ok(()),
         Err(err) => {
-            eprintln!("Error during try_join for database inserts: {}", err);
+            crate::metrics::STORE_ERRORS_TOTAL.inc();
+            tracing::error!("Error during try_join for database inserts: {}", err);
             anyhow::bail!(
                 "Failed to insert transactions or execution outcomes into Clickhouse: {}",
                 err
@@ -46,9 +45,9 @@ pub async fn handle_transactions(
 
 async fn extract_transactions(
     message: &near_indexer_primitives::StreamerMessage,
-    receipts_cache_arc: types::ReceiptsCacheArc,
+    receipts_cache_arc: cache::ReceiptsCacheArc,
 ) -> anyhow::Result<Vec<types::TransactionRow>> {
-    let mut receipts_cache_lock = receipts_cache_arc.lock().await;
+    let receipts_cache_lock = receipts_cache_arc.lock().await;
     let block_height = message.block.header.height;
     let block_hash = message.block.header.hash.to_string();
     let block_timestamp = message.block.header.timestamp;
@@ -77,7 +76,7 @@ async fn extract_transactions(
                 // and the Transaction hash as a value.
                 // Later, while Receipt will be looking for a parent Transaction hash
                 // it will be able to find it in the ReceiptsCache
-                receipts_cache_lock.cache_set(
+                receipts_cache_lock.set(
                     types::ReceiptOrDataId::ReceiptId(*converted_into_receipt_id),
                     transaction_hash.clone(),
                 );
@@ -96,7 +95,7 @@ async fn extract_transactions(
                             .map(|action| types::Action::from(action))
                             .collect::<Vec<types::Action>>(),
                     )
-                    .unwrap(),
+                    .expect("Failed to serialize actions for transaction"),
                 })
             } else {
                 None
@@ -106,7 +105,20 @@ async fn extract_transactions(
 
     drop(receipts_cache_lock);
 
-    println!(
+    crate::metrics::ASSETS_IN_BLOCK_TOTAL
+        .with_label_values(&["transactions"])
+        .set(
+            message
+                .shards
+                .iter()
+                .filter_map(|shard| shard.chunk.as_ref())
+                .map(|chunk| chunk.transactions.len() as i64)
+                .sum(),
+        );
+    crate::metrics::ASSETS_IN_BLOCK_CAPTURED_TOTAL
+        .with_label_values(&["transactions"])
+        .set(transactions.len() as i64);
+    tracing::info!(
         "intents.near transactions in block: {}, {:#?}",
         transactions.len(),
         transactions
@@ -141,8 +153,7 @@ async fn extract_transaction_execution_outcomes(
                     execution_outcome_id: tx.outcome.execution_outcome.id.to_string(),
                     executor_id: tx.outcome.execution_outcome.outcome.executor_id.to_string(),
                     parent_transaction_hash: tx.transaction.hash.to_string(),
-                    status: serde_json::to_string(&tx.outcome.execution_outcome.outcome.status)
-                        .unwrap(),
+                    status: parse_status(tx.outcome.execution_outcome.outcome.status.clone()),
                     gas_burnt: tx.outcome.execution_outcome.outcome.gas_burnt,
                     tokens_burnt: tx
                         .outcome
@@ -151,7 +162,7 @@ async fn extract_transaction_execution_outcomes(
                         .tokens_burnt
                         .to_string(),
                     logs: serde_json::to_string(&tx.outcome.execution_outcome.outcome.logs)
-                        .unwrap(),
+                        .expect("Failed to serialize logs for transaction execution outcome"),
                     receipt_ids: tx
                         .outcome
                         .execution_outcome
@@ -167,7 +178,7 @@ async fn extract_transaction_execution_outcomes(
         })
         .collect::<Vec<_>>();
 
-    println!(
+    tracing::info!(
         "intents.near transaction execution outcomes in block: {}, {:#?}",
         execution_outcomes.len(),
         execution_outcomes

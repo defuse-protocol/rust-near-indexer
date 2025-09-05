@@ -1,7 +1,6 @@
-use cached::Cached;
-
 use near_lake_framework::near_indexer_primitives;
 
+use crate::cache;
 use crate::types::{EventJson, EventRow};
 use crate::CONTRACT_ACCOUNT_IDS_OF_INTEREST;
 
@@ -17,18 +16,18 @@ const EVENT_CLICKHOUSE_TABLE: &str = "events";
 pub async fn handle_events(
     message: &near_indexer_primitives::StreamerMessage,
     client: &clickhouse::Client,
-    receipts_cache_arc: crate::types::ReceiptsCacheArc,
+    receipts_cache_arc: cache::ReceiptsCacheArc,
 ) -> anyhow::Result<()> {
-    let mut receipts_cache_lock = receipts_cache_arc.lock().await;
+    let receipts_cache_lock = receipts_cache_arc.lock().await;
     let rows: Vec<EventRow> = message
         .shards
         .iter()
         .flat_map(|shard| shard.receipt_execution_outcomes.iter())
         .map(|outcome| {
-            let parent_tx_hash = receipts_cache_lock.cache_get(
+            let parent_tx_hash = receipts_cache_lock.get(
                 &crate::types::ReceiptOrDataId::ReceiptId(outcome.receipt.receipt_id),
             );
-            let tx_hash = parent_tx_hash.cloned();
+            let tx_hash = parent_tx_hash.clone();
             (tx_hash, outcome)
         })
         .flat_map(|(tx_hash, outcome)| {
@@ -52,7 +51,8 @@ pub async fn handle_events(
 
     drop(receipts_cache_lock);
     if let Err(err) = crate::database::insert_rows(client, EVENT_CLICKHOUSE_TABLE, &rows).await {
-        eprintln!("Error inserting rows into Clickhouse: {}", err);
+        crate::metrics::STORE_ERRORS_TOTAL.inc();
+        tracing::error!("Error inserting rows into Clickhouse: {}", err);
         anyhow::bail!("Failed to insert rows into Clickhouse: {}", err)
     }
     Ok(())

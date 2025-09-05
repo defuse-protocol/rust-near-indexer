@@ -1,12 +1,10 @@
 use std::str::FromStr;
 
-use cached::Cached;
-
 use near_lake_framework::near_indexer_primitives::{self, near_primitives};
 
-use crate::{handlers::events::parse_status, types};
+use crate::{cache, handlers::events::parse_status, types};
 
-const EXECUTION_OUTCOMES_CLICKHOUSE_TABLE: &str = "execution_outcomes";
+pub(crate) const EXECUTION_OUTCOMES_CLICKHOUSE_TABLE: &str = "execution_outcomes";
 
 /// Extract execution outcomes from the StreamerMessage,
 /// store execution outcomes in Clickhouse, and update the receipts cache with
@@ -19,7 +17,7 @@ const EXECUTION_OUTCOMES_CLICKHOUSE_TABLE: &str = "execution_outcomes";
 pub async fn handle_execution_outcomes(
     message: &near_indexer_primitives::StreamerMessage,
     client: &clickhouse::Client,
-    receipts_cache_arc: types::ReceiptsCacheArc,
+    receipts_cache_arc: cache::ReceiptsCacheArc,
 ) -> anyhow::Result<()> {
     let execution_outcomes =
         extract_execution_outcomes(message, receipts_cache_arc.clone()).await?;
@@ -31,7 +29,8 @@ pub async fn handle_execution_outcomes(
     )
     .await
     {
-        eprintln!("Error inserting rows into Clickhouse: {}", err);
+        crate::metrics::STORE_ERRORS_TOTAL.inc();
+        tracing::error!("Error inserting rows into Clickhouse: {}", err);
         anyhow::bail!("Failed to insert rows into Clickhouse: {}", err)
     }
 
@@ -40,9 +39,9 @@ pub async fn handle_execution_outcomes(
 
 async fn extract_execution_outcomes(
     message: &near_indexer_primitives::StreamerMessage,
-    receipts_cache_arc: types::ReceiptsCacheArc,
+    receipts_cache_arc: cache::ReceiptsCacheArc,
 ) -> anyhow::Result<Vec<types::ExecutionOutcomeRow>> {
-    let mut receipts_cache_lock = receipts_cache_arc.lock().await;
+    let receipts_cache_lock = receipts_cache_arc.lock().await;
     let block_height = message.block.header.height;
     let block_timestamp = message.block.header.timestamp;
     let block_hash = message.block.header.hash.to_string();
@@ -51,7 +50,7 @@ async fn extract_execution_outcomes(
         .iter()
         .flat_map(|shard| shard.receipt_execution_outcomes.iter())
         .flat_map(|outcome: &near_indexer_primitives::IndexerExecutionOutcomeWithReceipt| {
-            if let Some(parent_tx_hash) = receipts_cache_lock.cache_get(&types::ReceiptOrDataId::ReceiptId(outcome.receipt.receipt_id)) {
+            if let Some(parent_tx_hash) = receipts_cache_lock.get(&types::ReceiptOrDataId::ReceiptId(outcome.receipt.receipt_id)) {
                 Some(types::ExecutionOutcomeRow {
                     block_height: block_height,
                     block_timestamp: block_timestamp,
@@ -70,7 +69,9 @@ async fn extract_execution_outcomes(
                     outcome.receipt.receiver_id.as_str(),
                     outcome.receipt.predecessor_id.as_str(),
                 ]) {
-                    println!("We don't watch for the this execution outcome but it is related to the account ids of interest, {}\n{:#?}", outcome.receipt.receipt_id, outcome.receipt);
+                    tracing::info!("We don't watch for the this execution outcome but it is related to the account ids of interest, {}", outcome.receipt.receipt_id);
+                    tracing::debug!("{:#?}", outcome.receipt);
+                    crate::metrics::POTENTIAL_ASSET_MISS_TOTAL.with_label_values(&["execution_outcomes"]).inc();
                 }
                 None
             }
@@ -80,7 +81,7 @@ async fn extract_execution_outcomes(
     // Add receipts that are going to be created by ExecutionOutcome to the cache (receipt-transaction matcher)
     execution_outcomes.iter().for_each(|outcome| {
         for receipt_id in &outcome.receipt_ids {
-            receipts_cache_lock.cache_set(
+            receipts_cache_lock.set(
                 types::ReceiptOrDataId::ReceiptId(
                     near_primitives::hash::CryptoHash::from_str(receipt_id).unwrap(),
                 ),
@@ -89,5 +90,17 @@ async fn extract_execution_outcomes(
         }
     });
     drop(receipts_cache_lock);
+    crate::metrics::ASSETS_IN_BLOCK_TOTAL
+        .with_label_values(&["execution_outcomes"])
+        .set(
+            message
+                .shards
+                .iter()
+                .map(|shard| shard.receipt_execution_outcomes.len() as i64)
+                .sum(),
+        );
+    crate::metrics::ASSETS_IN_BLOCK_CAPTURED_TOTAL
+        .with_label_values(&["execution_outcomes"])
+        .set(execution_outcomes.len() as i64);
     Ok(execution_outcomes)
 }
