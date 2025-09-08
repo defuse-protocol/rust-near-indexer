@@ -45,6 +45,8 @@ Create a `.env` file (example):
 # .env
 CLICKHOUSE_URL="http://localhost:18123"
 CLICKHOUSE_DB="mainnet"
+AWS_ACCESS_KEY_ID="your_aws_access_key_id"
+AWS_SECRET_ACCESS_KEY="your_aws_secret_access_key"
 # optional:
 # CLICKHOUSE_USER="clickhouse"
 # CLICKHOUSE_PASSWORD="secret"
