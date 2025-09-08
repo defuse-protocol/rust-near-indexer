@@ -11,7 +11,7 @@ This project is a Rust-based indexer that processes blockchain events from NEAR 
 
 ## Requirements
 
-1. [Rust](https://www.rust-lang.org/tools/install) (1.85.0 version recommended)
+1. [Rust](https://www.rust-lang.org/tools/install) (1.86.0 version recommended)
 2. [Clickhouse](https://clickhouse.com/docs/en/quick-start#self-managed-install) database server
 3. Environment variables for configuration
 
@@ -31,7 +31,7 @@ The indexer is configured via environment variables. The table below lists the m
 | `CLICKHOUSE_URL`        |    Yes   | Clickhouse server URL (e.g. `http://localhost:18123`) |
 | `CLICKHOUSE_USER`       |    No    | Clickhouse username (leave empty for anonymous/local setups) |
 | `CLICKHOUSE_PASSWORD`   |    No    | Clickhouse password |
-| `CLICKHOUSE_DB`         |    No    | Clickhouse database name (default: `mainnet`) |
+| `CLICKHOUSE_DATABASE`   |    No    | Clickhouse database name (default: `mainnet`) |
 | `BLOCK_HEIGHT`          |    No    | Start block height for indexing — if unset the indexer resumes from last saved state |
 | `AWS_ACCESS_KEY_ID`     |    No    | Required only when using AWS S3/Lake storage for NEAR lake input |
 | `AWS_SECRET_ACCESS_KEY` |    No    | Required only when using AWS S3/Lake storage for NEAR lake input |
@@ -44,7 +44,7 @@ Create a `.env` file (example):
 ```bash
 # .env
 CLICKHOUSE_URL="http://localhost:18123"
-CLICKHOUSE_DB="mainnet"
+CLICKHOUSE_DATABASE="mainnet"
 AWS_ACCESS_KEY_ID="your_aws_access_key_id"
 AWS_SECRET_ACCESS_KEY="your_aws_secret_access_key"
 # optional:
@@ -534,8 +534,8 @@ CREATE TABLE execution_outcomes (
     INDEX executor_id_bloom_idx executor_id TYPE bloom_filter() GRANULARITY 1,
     INDEX parent_tx_hash_bloom_idx parent_transaction_hash TYPE bloom_filter() GRANULARITY 1
 ) ENGINE = ReplacingMergeTree
-PRIMARY KEY (block_height, parent_transaction_hash)
-ORDER BY (block_height, parent_transaction_hash)
+PRIMARY KEY (block_height, execution_outcome_id)
+ORDER BY (block_height, execution_outcome_id)
 SETTINGS index_granularity = 8192;
 
 ```

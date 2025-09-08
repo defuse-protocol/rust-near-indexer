@@ -2,7 +2,7 @@
 name = "near-defuse-indexer"
 version = "0.2.0"
 edition = "2024"
-rust-version = "1.85.0"
+rust-version = "1.86.0"
 
 [[bin]]
 name = "near-defuse-indexer"
