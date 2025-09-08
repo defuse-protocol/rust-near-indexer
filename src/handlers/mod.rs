@@ -44,10 +44,6 @@ async fn handle_streamer_message(
     let start = Instant::now();
     crate::metrics::LATEST_BLOCK_HEIGHT.set(message.block.header.height as i64);
     tracing::info!("Block: {}", message.block.header.height);
-    // TODO: remove it after tests
-    if message.block.header.height > 162389776 {
-        std::process::exit(0);
-    }
 
     // We always process transactions first to populate the cache
     // with mappings from Receipt IDs to their parent Transaction hashes.

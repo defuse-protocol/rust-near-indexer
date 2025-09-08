@@ -4,7 +4,7 @@ use clap::Parser;
 #[macro_use]
 extern crate lazy_static;
 
-use crate::config::{init_tracing, AppConfig};
+use crate::config::{AppConfig, init_tracing};
 use crate::database::{get_last_height, init_clickhouse_client};
 
 mod cache;
@@ -31,27 +31,23 @@ async fn main() -> anyhow::Result<()> {
         .parse()
         .expect("Failed to parse BLOCK_HEIGHT");
 
-    // let last_height = get_last_height(&client).await.unwrap_or(0);
-    let last_height = 0;
+    let last_height = get_last_height(&client).await.unwrap_or(0);
     let start_block = block_height.max(last_height + 1);
 
     tracing::info!("Starting indexer at block height: {}", start_block);
 
-    // TODO: enable this after development and testing
     let lake_config = near_lake_framework::LakeConfigBuilder::default()
         .mainnet()
         .start_block_height(start_block)
         .build()
         .expect("Error creating NEAR Lake framework config");
 
+    // TODO: consider making the provider configurable (e.g., via CLI argument)
     // let lake_config = near_lake_framework::FastNearConfigBuilder::default()
     //     .mainnet()
     //     .start_block_height(start_block)
     //     .build()
     //     .expect("Error creating NEAR Lake framework config");
-
-    // let receipts_cache_arc: types::ReceiptsCacheArc =
-    //     std::sync::Arc::new(Mutex::new(SizedCache::with_size(100_000)));
 
     let receipts_cache_arc: cache::ReceiptsCacheArc = cache::init_cache(&config);
 

@@ -24,61 +24,100 @@ cargo build --release
 ## Environment Configuration
 
 Before running the indexer, ensure that all required environment variables are set:
+The indexer is configured via environment variables. The table below lists the most commonly used options. Values marked REQUIRED must be provided; others have sensible defaults or are optional depending on features you use.
 
-| Variable                | Description                     | Default Value            |
-| ----------------------- | ------------------------------- | ------------------------ |
-| `CLICKHOUSE_URL`        | Clickhouse server URL           | `http://localhost:18123` |
-| `CLICKHOUSE_USER`       | Username for Clickhouse         | -                        |
-| `CLICKHOUSE_PASSWORD`   | Password for Clickhouse         | -                        |
-| `CLICKHOUSE_DB`         | Clickhouse database name        | `mainnet`                |
-| `BLOCK_HEIGHT`          | Start block height for indexing | -                        |
-| `AWS_ACCESS_KEY_ID`     | AWS access key ID               | -                        |
-| `AWS_SECRET_ACCESS_KEY` | AWS secret access key           | -                        |
-| `REDIS_URL`             | Redis connection URL (optional) | -                        |
+| Variable                | Required | Description |
+|-------------------------|:--------:|-------------|
+| `CLICKHOUSE_URL`        |    Yes   | Clickhouse server URL (e.g. `http://localhost:18123`) |
+| `CLICKHOUSE_USER`       |    No    | Clickhouse username (leave empty for anonymous/local setups) |
+| `CLICKHOUSE_PASSWORD`   |    No    | Clickhouse password |
+| `CLICKHOUSE_DB`         |    No    | Clickhouse database name (default: `mainnet`) |
+| `BLOCK_HEIGHT`          |    No    | Start block height for indexing — if unset the indexer resumes from last saved state |
+| `AWS_ACCESS_KEY_ID`     |    No    | Required only when using AWS S3/Lake storage for NEAR lake input |
+| `AWS_SECRET_ACCESS_KEY` |    No    | Required only when using AWS S3/Lake storage for NEAR lake input |
+| `REDIS_URL`             |    No    | Redis connection URL for caching (optional) |
 
-Example of setting up environment variables (replace with your actual values):
+Quick examples:
+
+Create a `.env` file (example):
 
 ```bash
-export CLICKHOUSE_URL="http://localhost:18123"
-export CLICKHOUSE_USER="<your-clickhouse-username>"
-export CLICKHOUSE_PASSWORD="<your-clickhouse-password>"
-export CLICKHOUSE_DB="mainnet"
-export BLOCK_HEIGHT="130636886"
-export AWS_ACCESS_KEY_ID="<your-aws-access-key-id>"
-export AWS_SECRET_ACCESS_KEY="<your-aws-secret-access-key>"
-export REDIS_URL="redis://127.0.0.1:6379"
+# .env
+CLICKHOUSE_URL="http://localhost:18123"
+CLICKHOUSE_DB="mainnet"
+# optional:
+# CLICKHOUSE_USER="clickhouse"
+# CLICKHOUSE_PASSWORD="secret"
+# REDIS_URL="redis://127.0.0.1:6379"
+# BLOCK_HEIGHT="130636886"
 ```
+
+Load the `.env` and run (POSIX shell):
+
+```bash
+export $(grep -v '^#' .env | xargs)
+cargo run --release
+```
+
+Notes:
+- If you use NEAR Lake with S3, provide AWS credentials or an appropriate IAM role.
+- `REDIS_URL` is optional and used for the transaction cache; leave unset to disable Redis caching.
 
 ## Usage
 
-1. Start the Clickhouse server.
-2. Run the application:
+Prerequisites
+- Clickhouse server running and reachable via `CLICKHOUSE_URL`.
+- (Optional) Redis server if using caching.
 
-   ```bash
-   cargo run --release
-   ```
+Basic run (development / single-run):
 
-The application will:
+```bash
+cargo run --release
+```
 
-- Connect to the Clickhouse server.
-- Start reading blockchain events from the specified `BLOCK_HEIGHT` (or the last processed height).
-- Filter and insert selected events into the Clickhouse database.
-
-### Optional Command-line Execution
-
-You can pass `BLOCK_HEIGHT` when running the program to override the default or previously set block height.
+Override the start block on the fly:
 
 ```bash
 BLOCK_HEIGHT=130636886 cargo run --release
 ```
+
+Deployment suggestions
+- For production runs consider running the binary as a systemd service, in a container, or using a process supervisor so it restarts on failure.
+- Ensure Clickhouse and Redis (if used) are configured for persistent storage and appropriate resource limits.
+
+What the indexer does
+- Connects to the NEAR stream, decodes events, and writes structured rows into Clickhouse tables defined in this README.
+- Persists a small transaction cache to Redis (if `REDIS_URL` is provided) to deduplicate work across blocks.
+
+Logging and metrics
+- The indexer emits logs (see `RUST_LOG` environment variable to control level). Use `RUST_LOG=info` or `debug` while developing.
+- Metrics are exported for monitoring (see `metrics.rs` in `src/` for details). Hook Prometheus to the exposed endpoint if you run metrics collection.
 
 ## Project Structure
 
 The project is structured as follows:
 
 - `main.rs`: Initializes the application, connects to Clickhouse, and starts the indexer.
-- `database.rs`: Contains functions for connecting to Clickhouse and managing data.
-- `event_handler.rs`: Processes streamed events and filters specific event standards.
+The project layout (top-level `src/` files):
+
+- `main.rs` — application entrypoint: loads configuration, starts runtime, wires components.
+- `database.rs` — Clickhouse connectivity, schema helper code and insert helpers.
+- `handlers/` — event handling code split per artifact (events, receipts, transactions, outcomes).
+- `metrics.rs` — Prometheus / metrics instrumentation.
+- `retry.rs` — retry/backoff helpers used by network/database calls.
+- `cache/` — transaction cache implementations (local / redis-backed).
+
+Editing and extending
+- Add new materialized views or tables to the schema section below. If you add a table referenced by a view, keep names consistent.
+
+Troubleshooting
+- Connection refused to Clickhouse: verify `CLICKHOUSE_URL` and that Clickhouse is running and reachable from the host.
+- Authentication errors: check `CLICKHOUSE_USER`/`CLICKHOUSE_PASSWORD` and Clickhouse user grants.
+- High memory/CPU in Clickhouse: tune Clickhouse server settings or reduce ingestion concurrency.
+
+Contributing
+- Open a PR on the `feat/potential-cache` or relevant branch, make small focused changes, and include tests where reasonable.
+- Update this README if you add configuration variables or change runtime behavior.
 
 ## Clickhouse schema
 
