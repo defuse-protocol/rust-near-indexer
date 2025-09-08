@@ -11,7 +11,7 @@ This project is a Rust-based indexer that processes blockchain events from NEAR 
 
 ## Requirements
 
-1. [Rust](https://www.rust-lang.org/tools/install) (1.76.0 version recommended)
+1. [Rust](https://www.rust-lang.org/tools/install) (1.85.0 version recommended)
 2. [Clickhouse](https://clickhouse.com/docs/en/quick-start#self-managed-install) database server
 3. Environment variables for configuration
 

@@ -1,0 +1,22 @@
+steps:
+  - name: rust:1.85
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        cargo build --release
+        cp target/release/near-defuse-indexer ./near-defuse-indexer
+
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        # Upload both versioned and latest
+        gsutil cp ./near-defuse-indexer gs://near-indexer-builds/near-defuse-indexer-$(date +%Y%m%d%H%M%S)
+        gsutil cp ./near-defuse-indexer gs://near-indexer-builds/near-defuse-indexer
+
+artifacts:
+  objects:
+    location: gs://near-indexer-builds/
+    paths: ["./near-defuse-indexer"]
