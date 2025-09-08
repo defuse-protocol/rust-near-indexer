@@ -104,7 +104,6 @@ The project layout (top-level `src/` files):
 - `database.rs` — Clickhouse connectivity, schema helper code and insert helpers.
 - `handlers/` — event handling code split per artifact (events, receipts, transactions, outcomes).
 - `metrics.rs` — Prometheus / metrics instrumentation.
-- `retry.rs` — retry/backoff helpers used by network/database calls.
 - `cache/` — transaction cache implementations (local / redis-backed).
 
 Editing and extending
@@ -135,6 +134,25 @@ CREATE TABLE defuse_assets (
 ) ENGINE = ReplacingMergeTree
 PRIMARY KEY (defuse_asset_id, price_updated_at)
 ORDER BY (defuse_asset_id, price_updated_at);
+
+CREATE MATERIALIZED VIEW mv_defuse_assets
+REFRESH EVERY 1 DAY APPEND TO defuse_assets AS (
+    WITH json_rows AS (
+        SELECT
+        arrayJoin(items) item
+        FROM url('https://api-mng-console.chaindefuser.com/api/tokens/', JSONEachRow)
+    )
+
+    SELECT
+        item.blockchain blockchain
+        , item.contract_address contract_address
+        , item.decimals decimals
+        , item.defuse_asset_id defuse_asset_id
+        , item.price price
+        , item.price_updated_at price_updated_at
+        , item.symbol symbol
+    FROM json_rows
+);
 
 CREATE TABLE events (
     block_height                UInt64 COMMENT 'The height of the block',

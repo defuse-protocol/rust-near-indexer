@@ -27,14 +27,15 @@ pub async fn handle_events(
         .shards
         .iter()
         .flat_map(|shard| shard.receipt_execution_outcomes.iter())
-        .map(|outcome| {
+        .enumerate()
+        .map(|(index, outcome)| {
             let parent_tx_hash = receipts_cache_lock.get(
                 &crate::types::ReceiptOrDataId::ReceiptId(outcome.receipt.receipt_id),
             );
             let tx_hash = parent_tx_hash.clone();
-            (tx_hash, outcome)
+            (tx_hash, outcome, index as u64)
         })
-        .flat_map(|(tx_hash, outcome)| {
+        .flat_map(|(tx_hash, outcome, index)| {
             outcome
                 .execution_outcome
                 .outcome
@@ -49,6 +50,7 @@ pub async fn handle_events(
                         outcome,
                         &message.block.header,
                         tx_hash.clone(),
+                        Some(index),
                     )
                 })
         });
@@ -74,6 +76,7 @@ async fn parse_event(
     outcome: &near_indexer_primitives::IndexerExecutionOutcomeWithReceipt,
     header: &near_indexer_primitives::views::BlockHeaderView,
     parent_tx_hash: Option<String>,
+    receipt_index_in_block: Option<u64>,
 ) -> Option<EventRow> {
     let start = Instant::now();
     let log_trimmed = log.trim();
@@ -104,6 +107,7 @@ async fn parse_event(
                         related_receipt_receiver_id: outcome.receipt.receiver_id.to_string(),
                         related_receipt_predecessor_id: outcome.receipt.predecessor_id.to_string(),
                         tx_hash: parent_tx_hash,
+                        receipt_index_in_block: receipt_index_in_block,
                     });
                 }
             }
