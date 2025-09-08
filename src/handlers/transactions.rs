@@ -44,7 +44,7 @@ pub async fn handle_transactions(
             )
         }
     };
-    tracing::info!("handle_transactions {:?}", start.elapsed());
+    tracing::debug!("handle_transactions {:?}", start.elapsed());
     result
 }
 
@@ -53,7 +53,7 @@ async fn extract_transactions(
     receipts_cache_arc: cache::ReceiptsCacheArc,
 ) -> anyhow::Result<Vec<types::TransactionRow>> {
     let start = Instant::now();
-    let receipts_cache_lock = receipts_cache_arc.lock().await;
+    let receipts_cache = receipts_cache_arc.clone();
     let block_height = message.block.header.height;
     let block_hash = message.block.header.hash.to_string();
     let block_timestamp = message.block.header.timestamp;
@@ -82,22 +82,22 @@ async fn extract_transactions(
                 // and the Transaction hash as a value.
                 // Later, while Receipt will be looking for a parent Transaction hash
                 // it will be able to find it in the ReceiptsCache
-                receipts_cache_lock.set(
+                receipts_cache.set(
                     types::ReceiptOrDataId::ReceiptId(*converted_into_receipt_id),
                     transaction_hash.clone(),
                 );
                 Some(types::TransactionRow {
-                    block_height: block_height,
-                    block_timestamp: block_timestamp,
+                    block_height,
+                    block_timestamp,
                     block_hash: block_hash.clone(),
-                    transaction_hash: transaction_hash,
+                    transaction_hash,
                     signer_id: tx.transaction.signer_id.to_string(),
                     receiver_id: tx.transaction.receiver_id.to_string(),
                     actions: serde_json::to_string(
                         &tx.transaction
                             .actions
                             .iter()
-                            .map(|action| types::Action::from(action))
+                            .map(types::Action::from)
                             .collect::<Vec<types::Action>>(),
                     )
                     .expect("Failed to serialize actions for transaction"),
@@ -110,7 +110,7 @@ async fn extract_transactions(
                     "Add receipt to potential cache: {}",
                     converted_into_receipt_id,
                 );
-                receipts_cache_lock.potential_set(
+                receipts_cache.potential_set(
                     types::ReceiptOrDataId::ReceiptId(*converted_into_receipt_id),
                     transaction_hash.clone(),
                 );
@@ -119,7 +119,7 @@ async fn extract_transactions(
         })
         .collect::<Vec<_>>();
 
-    drop(receipts_cache_lock);
+    drop(receipts_cache);
 
     crate::metrics::ASSETS_IN_BLOCK_TOTAL
         .with_label_values(&["transactions"])
@@ -134,7 +134,7 @@ async fn extract_transactions(
     crate::metrics::ASSETS_IN_BLOCK_CAPTURED_TOTAL
         .with_label_values(&["transactions"])
         .set(transactions.len() as i64);
-    tracing::info!("extract_transactions {:?}", start.elapsed());
+    tracing::debug!("extract_transactions {:?}", start.elapsed());
     Ok(transactions)
 }
 
@@ -157,8 +157,8 @@ async fn extract_transaction_execution_outcomes(
                 tx.transaction.receiver_id.as_str(),
             ]) {
                 Some(types::ExecutionOutcomeRow {
-                    block_height: block_height,
-                    block_timestamp: block_timestamp,
+                    block_height,
+                    block_timestamp,
                     block_hash: block_hash.clone(),
                     execution_outcome_id: tx.outcome.execution_outcome.id.to_string(),
                     executor_id: tx.outcome.execution_outcome.outcome.executor_id.to_string(),
@@ -187,7 +187,7 @@ async fn extract_transaction_execution_outcomes(
             }
         })
         .collect::<Vec<_>>();
-    tracing::info!(
+    tracing::debug!(
         "extract_transaction_execution_outcomes {:?}",
         start.elapsed()
     );

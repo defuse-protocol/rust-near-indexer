@@ -1,4 +1,4 @@
-use actix_web::{dev::ServiceRequest, get, App, Error, HttpServer, Responder};
+use actix_web::{App, Error, HttpResponse, HttpServer, Responder, dev::ServiceRequest, get};
 use actix_web_httpauth::{
     extractors::basic::{BasicAuth, Config},
     middleware::HttpAuthentication,
@@ -73,17 +73,19 @@ lazy_static! {
 #[get("/metrics")]
 async fn get_metrics() -> impl Responder {
     let encoder = prometheus::TextEncoder::new();
-
+    let metric_families = prometheus::gather();
     let mut buffer = Vec::new();
-    if let Err(e) = encoder.encode(&prometheus::gather(), &mut buffer) {
+    if let Err(e) = encoder.encode(&metric_families, &mut buffer) {
         tracing::error!("could not encode metrics: {}", e);
-    };
-
-    match String::from_utf8(buffer.clone()) {
-        Ok(v) => v,
+        return HttpResponse::InternalServerError().finish();
+    }
+    match String::from_utf8(buffer) {
+        Ok(v) => HttpResponse::Ok()
+            .content_type(encoder.format_type())
+            .body(v),
         Err(e) => {
-            tracing::error!("custom metrics could not be from_utf8'd: {}", e);
-            String::default()
+            tracing::error!("metrics could not be from_utf8'd: {}", e);
+            HttpResponse::InternalServerError().finish()
         }
     }
 }

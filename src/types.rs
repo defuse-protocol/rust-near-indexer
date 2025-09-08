@@ -1,3 +1,4 @@
+use base64::{self, Engine};
 use clickhouse::Row;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -29,7 +30,7 @@ pub struct EventRow {
     pub related_receipt_receiver_id: String,
     pub related_receipt_predecessor_id: String,
     pub tx_hash: Option<String>,
-    pub receipt_index_in_block: Option<u64>,
+    pub receipt_index_in_block: u64,
 }
 
 #[derive(Deserialize)]
@@ -104,9 +105,9 @@ impl From<&near_primitives::views::ActionView> for Action {
                 action_type: "FunctionCall".to_string(),
                 params: serde_json::json!({
                     "method_name": method_name,
-                    "args": match serde_json::from_slice::<serde_json::Value>(&args) {
+                    "args": match serde_json::from_slice::<serde_json::Value>(args) {
                         Ok(json) => json,
-                        Err(_) => serde_json::to_value(args).unwrap(),
+                        Err(_) => serde_json::json!(base64::engine::general_purpose::STANDARD.encode(args.as_slice())),
                     },
                     "gas": gas.to_string(),
                     "deposit": deposit.to_string(),

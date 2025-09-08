@@ -2672,6 +2672,7 @@ dependencies = [
  "actix-web-httpauth",
  "anyhow",
  "async-trait",
+ "base64 0.22.1",
  "cached",
  "clap",
  "clickhouse",

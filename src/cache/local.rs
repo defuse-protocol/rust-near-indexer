@@ -14,11 +14,11 @@ pub struct LocalCache {
 }
 
 impl LocalCache {
-    pub fn new(size: usize) -> Self {
-        Self {
+    pub fn new(size: usize) -> anyhow::Result<Self> {
+        Ok(Self {
             watchlist_cache: Mutex::new(SizedCache::with_size(size)),
             potential_cache: Mutex::new(SizedCache::with_size(size)),
-        }
+        })
     }
 }
 

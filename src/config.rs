@@ -1,7 +1,7 @@
 use clap::Parser;
 
 /// Application configuration loaded from CLI arguments and environment variables.
-#[derive(Parser, Debug, Clone)]
+#[derive(Parser, Clone)]
 #[clap(author, version, about)]
 pub struct AppConfig {
     /// Clickhouse server URL (env: CLICKHOUSE_URL)

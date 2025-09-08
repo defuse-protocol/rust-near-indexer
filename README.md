@@ -29,9 +29,9 @@ The indexer is configured via environment variables. The table below lists the m
 | Variable                | Required | Description |
 |-------------------------|:--------:|-------------|
 | `CLICKHOUSE_URL`        |    Yes   | Clickhouse server URL (e.g. `http://localhost:18123`) |
-| `CLICKHOUSE_USER`       |    No    | Clickhouse username (leave empty for anonymous/local setups) |
-| `CLICKHOUSE_PASSWORD`   |    No    | Clickhouse password |
-| `CLICKHOUSE_DATABASE`   |    No    | Clickhouse database name (default: `mainnet`) |
+| `CLICKHOUSE_USER`       |    Yes   | Clickhouse username |
+| `CLICKHOUSE_PASSWORD`   |    Yes   | Clickhouse password |
+| `CLICKHOUSE_DATABASE`   |    Yes   | Clickhouse database name (default: `mainnet`) |
 | `BLOCK_HEIGHT`          |    No    | Start block height for indexing — if unset the indexer resumes from last saved state |
 | `AWS_ACCESS_KEY_ID`     |    No    | Required only when using AWS S3/Lake storage for NEAR lake input |
 | `AWS_SECRET_ACCESS_KEY` |    No    | Required only when using AWS S3/Lake storage for NEAR lake input |
@@ -45,11 +45,11 @@ Create a `.env` file (example):
 # .env
 CLICKHOUSE_URL="http://localhost:18123"
 CLICKHOUSE_DATABASE="mainnet"
+CLICKHOUSE_USER="clickhouse"
+CLICKHOUSE_PASSWORD="secret"
 AWS_ACCESS_KEY_ID="your_aws_access_key_id"
 AWS_SECRET_ACCESS_KEY="your_aws_secret_access_key"
 # optional:
-# CLICKHOUSE_USER="clickhouse"
-# CLICKHOUSE_PASSWORD="secret"
 # REDIS_URL="redis://127.0.0.1:6379"
 # BLOCK_HEIGHT="130636886"
 ```

@@ -22,16 +22,17 @@ pub async fn handle_events(
     receipts_cache_arc: cache::ReceiptsCacheArc,
 ) -> anyhow::Result<()> {
     let start = Instant::now();
-    let receipts_cache_lock = receipts_cache_arc.lock().await;
+    let receipts_cache = receipts_cache_arc.clone();
+
     let event_futures = message
         .shards
         .iter()
         .flat_map(|shard| shard.receipt_execution_outcomes.iter())
         .enumerate()
         .map(|(index, outcome)| {
-            let parent_tx_hash = receipts_cache_lock.get(
-                &crate::types::ReceiptOrDataId::ReceiptId(outcome.receipt.receipt_id),
-            );
+            let parent_tx_hash = receipts_cache.get(&crate::types::ReceiptOrDataId::ReceiptId(
+                outcome.receipt.receipt_id,
+            ));
             let tx_hash = parent_tx_hash.clone();
             (tx_hash, outcome, index as u64)
         })
@@ -50,21 +51,21 @@ pub async fn handle_events(
                         outcome,
                         &message.block.header,
                         tx_hash.clone(),
-                        Some(index),
+                        index,
                     )
                 })
         });
 
     let event_results: Vec<Option<EventRow>> = join_all(event_futures).await;
-    let rows: Vec<EventRow> = event_results.into_iter().filter_map(|row| row).collect();
+    let rows: Vec<EventRow> = event_results.into_iter().flatten().collect();
 
-    drop(receipts_cache_lock);
+    drop(receipts_cache);
     if let Err(err) = crate::database::insert_rows(client, EVENT_CLICKHOUSE_TABLE, &rows).await {
         crate::metrics::STORE_ERRORS_TOTAL.inc();
         tracing::error!("Error inserting rows into Clickhouse: {}", err);
         anyhow::bail!("Failed to insert rows into Clickhouse: {}", err)
     }
-    tracing::info!("handle_events {:?}", start.elapsed());
+    tracing::debug!("handle_events {:?}", start.elapsed());
     Ok(())
 }
 
@@ -76,40 +77,38 @@ async fn parse_event(
     outcome: &near_indexer_primitives::IndexerExecutionOutcomeWithReceipt,
     header: &near_indexer_primitives::views::BlockHeaderView,
     parent_tx_hash: Option<String>,
-    receipt_index_in_block: Option<u64>,
+    receipt_index_in_block: u64,
 ) -> Option<EventRow> {
     let start = Instant::now();
     let log_trimmed = log.trim();
 
-    if log_trimmed.starts_with(EVENT_JSON_PREFIX) {
-        if let Ok(event) =
-            serde_json::from_str::<EventJson>(&log_trimmed[EVENT_JSON_PREFIX.len()..])
-        {
+    if let Some(low_stripped) = log_trimmed.strip_prefix(EVENT_JSON_PREFIX) {
+        if let Ok(event) = serde_json::from_str::<EventJson>(low_stripped) {
             let contract_id = &outcome.execution_outcome.outcome.executor_id.to_string();
-            if CONTRACT_ACCOUNT_IDS_OF_INTEREST.contains(&contract_id.as_str()) {
-                if log_trimmed.contains("dip4") || log_trimmed.contains("nep245") {
-                    // println!("Event: {}", log_trimmed);
-                    tracing::debug!("parse_event {:?}", start.elapsed());
-                    return Some(EventRow {
-                        block_height: header.height,
-                        block_timestamp: header.timestamp,
-                        block_hash: header.hash.to_string(),
-                        contract_id: contract_id.to_string(),
-                        execution_status: parse_status(
-                            outcome.execution_outcome.outcome.status.clone(),
-                        ),
-                        version: event.version,
-                        standard: event.standard,
-                        index_in_log: index_in_log as u64,
-                        event: event.event,
-                        data: event.data.to_string(),
-                        related_receipt_id: outcome.receipt.receipt_id.to_string(),
-                        related_receipt_receiver_id: outcome.receipt.receiver_id.to_string(),
-                        related_receipt_predecessor_id: outcome.receipt.predecessor_id.to_string(),
-                        tx_hash: parent_tx_hash,
-                        receipt_index_in_block: receipt_index_in_block,
-                    });
-                }
+            if CONTRACT_ACCOUNT_IDS_OF_INTEREST.contains(&contract_id.as_str())
+                && (log_trimmed.contains("dip4") || log_trimmed.contains("nep245"))
+            {
+                // println!("Event: {}", log_trimmed);
+                tracing::debug!("parse_event {:?}", start.elapsed());
+                return Some(EventRow {
+                    block_height: header.height,
+                    block_timestamp: header.timestamp,
+                    block_hash: header.hash.to_string(),
+                    contract_id: contract_id.to_string(),
+                    execution_status: parse_status(
+                        outcome.execution_outcome.outcome.status.clone(),
+                    ),
+                    version: event.version,
+                    standard: event.standard,
+                    index_in_log: index_in_log as u64,
+                    event: event.event,
+                    data: event.data.to_string(),
+                    related_receipt_id: outcome.receipt.receipt_id.to_string(),
+                    related_receipt_receiver_id: outcome.receipt.receiver_id.to_string(),
+                    related_receipt_predecessor_id: outcome.receipt.predecessor_id.to_string(),
+                    tx_hash: parent_tx_hash,
+                    receipt_index_in_block,
+                });
             }
         }
     }

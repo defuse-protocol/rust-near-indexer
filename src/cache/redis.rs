@@ -15,16 +15,27 @@ impl RedisCache {
     /// # Arguments
     /// * `url` - Redis server URL
     /// * `ttl_seconds` - TTL for cached values in seconds
-    pub fn new(url: &str, ttl_seconds: u64) -> Self {
-        let client = redis::Client::open(url).expect("Failed to create Redis client");
-        Self {
+    pub fn new(url: &str, ttl_seconds: u64) -> anyhow::Result<Self> {
+        let client = redis::Client::open(url)?;
+        Ok(Self {
             client,
             ttl_seconds,
-        }
+        })
     }
 
     fn key_for_receipt(id: &ReceiptOrDataId) -> String {
-        format!("receipt_cache:{:?}", id)
+        format!("receipt_cache:{}", Self::id_str(id))
+    }
+
+    fn key_for_potential(id: &ReceiptOrDataId) -> String {
+        format!("potential_cache:{}", Self::id_str(id))
+    }
+
+    fn id_str(id: &ReceiptOrDataId) -> String {
+        match id {
+            ReceiptOrDataId::ReceiptId(h) => h.to_string(),
+            ReceiptOrDataId::_DataId(h) => h.to_string(),
+        }
     }
 
     /// Run a blocking closure in a way that doesn't block the Tokio runtime worker threads.
@@ -52,10 +63,7 @@ impl super::TxCache for RedisCache {
                 Err(_) => return None,
             };
             let redis_key = Self::key_for_receipt(key);
-            match conn.get(redis_key) {
-                Ok(val) => val,
-                Err(_) => None,
-            }
+            conn.get(redis_key).unwrap_or_default()
         })
     }
 
@@ -76,11 +84,8 @@ impl super::TxCache for RedisCache {
                 Ok(c) => c,
                 Err(_) => return None,
             };
-            let redis_key = format!("potential_cache:{:?}", key);
-            match conn.get(redis_key) {
-                Ok(val) => val,
-                Err(_) => None,
-            }
+            let redis_key = Self::key_for_potential(key);
+            conn.get(redis_key).unwrap_or_default()
         })
     }
 
@@ -90,7 +95,7 @@ impl super::TxCache for RedisCache {
                 Ok(c) => c,
                 Err(_) => return,
             };
-            let redis_key = format!("potential_cache:{:?}", key);
+            let redis_key = Self::key_for_potential(&key);
             let _ = conn.set_ex::<_, _, ()>(redis_key, value, self.ttl_seconds);
         })
     }
