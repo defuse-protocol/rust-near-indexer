@@ -5,6 +5,7 @@ use near_lake_framework::near_indexer_primitives;
 use crate::CONTRACT_ACCOUNT_IDS_OF_INTEREST;
 use crate::cache;
 use crate::types::{EventJson, EventRow};
+use futures::future::join_all;
 
 const EVENT_JSON_PREFIX: &str = "EVENT_JSON:";
 const EVENT_CLICKHOUSE_TABLE: &str = "events";
@@ -22,7 +23,7 @@ pub async fn handle_events(
 ) -> anyhow::Result<()> {
     let start = Instant::now();
     let receipts_cache_lock = receipts_cache_arc.lock().await;
-    let rows: Vec<EventRow> = message
+    let event_futures = message
         .shards
         .iter()
         .flat_map(|shard| shard.receipt_execution_outcomes.iter())
@@ -40,7 +41,8 @@ pub async fn handle_events(
                 .logs
                 .iter()
                 .enumerate()
-                .filter_map(move |(index_in_log, log)| {
+                .map(move |(index_in_log, log)| {
+                    // Assuming parse_event is now async and returns a Future<Option<EventRow>>
                     parse_event(
                         index_in_log,
                         log,
@@ -49,8 +51,10 @@ pub async fn handle_events(
                         tx_hash.clone(),
                     )
                 })
-        })
-        .collect();
+        });
+
+    let event_results: Vec<Option<EventRow>> = join_all(event_futures).await;
+    let rows: Vec<EventRow> = event_results.into_iter().filter_map(|row| row).collect();
 
     drop(receipts_cache_lock);
     if let Err(err) = crate::database::insert_rows(client, EVENT_CLICKHOUSE_TABLE, &rows).await {
@@ -64,7 +68,7 @@ pub async fn handle_events(
 
 /// Parse a log entry to extract an EventRow if it contains valid event data.
 /// Returns Some(EventRow) if the log contains a valid event, otherwise None.
-fn parse_event(
+async fn parse_event(
     index_in_log: usize,
     log: &str,
     outcome: &near_indexer_primitives::IndexerExecutionOutcomeWithReceipt,
