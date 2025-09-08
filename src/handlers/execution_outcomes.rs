@@ -1,4 +1,5 @@
 use std::str::FromStr;
+use std::time::Instant;
 
 use near_lake_framework::near_indexer_primitives::{self, near_primitives};
 
@@ -19,6 +20,7 @@ pub async fn handle_execution_outcomes(
     client: &clickhouse::Client,
     receipts_cache_arc: cache::ReceiptsCacheArc,
 ) -> anyhow::Result<()> {
+    let start = Instant::now();
     let execution_outcomes =
         extract_execution_outcomes(message, receipts_cache_arc.clone()).await?;
 
@@ -33,7 +35,7 @@ pub async fn handle_execution_outcomes(
         tracing::error!("Error inserting rows into Clickhouse: {}", err);
         anyhow::bail!("Failed to insert rows into Clickhouse: {}", err)
     }
-
+    tracing::info!("handle_execution_outcomes {:?}", start.elapsed());
     Ok(())
 }
 
@@ -41,6 +43,7 @@ async fn extract_execution_outcomes(
     message: &near_indexer_primitives::StreamerMessage,
     receipts_cache_arc: cache::ReceiptsCacheArc,
 ) -> anyhow::Result<Vec<types::ExecutionOutcomeRow>> {
+    let start = Instant::now();
     let receipts_cache_lock = receipts_cache_arc.lock().await;
     let block_height = message.block.header.height;
     let block_timestamp = message.block.header.timestamp;
@@ -72,13 +75,39 @@ async fn extract_execution_outcomes(
                     tracing::info!("We don't watch for the this execution outcome but it is related to the account ids of interest, {}", outcome.receipt.receipt_id);
                     tracing::debug!("{:#?}", outcome.receipt);
                     crate::metrics::POTENTIAL_ASSET_MISS_TOTAL.with_label_values(&["execution_outcomes"]).inc();
+
+                    // We check the potential cache expecting to find a mapping there
+                    if let Some(parent_tx_hash) = receipts_cache_lock.potential_get(&types::ReceiptOrDataId::ReceiptId(outcome.receipt.receipt_id)) {
+                        tracing::info!("Found a potential mapping for outcome {} to transaction {}", outcome.execution_outcome.id, parent_tx_hash);
+                        // Protomote this cache entry to the main cache to catch the outcome
+                        receipts_cache_lock.set(types::ReceiptOrDataId::ReceiptId(outcome.receipt.receipt_id), parent_tx_hash.clone());
+
+                        Some(types::ExecutionOutcomeRow {
+                            block_height: block_height,
+                            block_timestamp: block_timestamp,
+                            block_hash: block_hash.clone(),
+                            execution_outcome_id: outcome.execution_outcome.id.to_string(),
+                            parent_transaction_hash: parent_tx_hash.clone(),
+                            executor_id: outcome.execution_outcome.outcome.executor_id.to_string(),
+                            status: parse_status(outcome.execution_outcome.outcome.status.clone()),
+                            logs: serde_json::to_string(&outcome.execution_outcome.outcome.logs).unwrap(),
+                            tokens_burnt: outcome.execution_outcome.outcome.tokens_burnt.to_string(),
+                            gas_burnt: outcome.execution_outcome.outcome.gas_burnt,
+                            receipt_ids: outcome.execution_outcome.outcome.receipt_ids.iter().map(|id| id.to_string()).collect(),
+                        })
+                    } else {
+                        tracing::warn!("No potential mapping found for outcome {}", outcome.execution_outcome.id);
+                        None
+                    }
+                } else {
+                    None
                 }
-                None
             }
         })
         .collect::<Vec<_>>();
 
     // Add receipts that are going to be created by ExecutionOutcome to the cache (receipt-transaction matcher)
+    // Main cache
     execution_outcomes.iter().for_each(|outcome| {
         for receipt_id in &outcome.receipt_ids {
             receipts_cache_lock.set(
@@ -89,6 +118,29 @@ async fn extract_execution_outcomes(
             );
         }
     });
+
+    // Potential cache
+    message
+        .shards
+        .iter()
+        .flat_map(|shard| shard.receipt_execution_outcomes.iter())
+        .for_each(|outcome| {
+            for receipt_id in &outcome.execution_outcome.outcome.receipt_ids {
+                // Only add to potential cache if not already present in main cache
+                let receipt_or_data_id = types::ReceiptOrDataId::ReceiptId(receipt_id.clone());
+                if !execution_outcomes
+                    .iter()
+                    .any(|row| row.receipt_ids.contains(&receipt_id.to_string()))
+                {
+                    tracing::debug!("Adding to potential cache for receipt {}", receipt_id);
+                    receipts_cache_lock.potential_set(
+                        receipt_or_data_id,
+                        outcome.execution_outcome.id.to_string(),
+                    );
+                }
+            }
+        });
+
     drop(receipts_cache_lock);
     crate::metrics::ASSETS_IN_BLOCK_TOTAL
         .with_label_values(&["execution_outcomes"])
@@ -102,5 +154,6 @@ async fn extract_execution_outcomes(
     crate::metrics::ASSETS_IN_BLOCK_CAPTURED_TOTAL
         .with_label_values(&["execution_outcomes"])
         .set(execution_outcomes.len() as i64);
+    tracing::info!("extract_execution_outcomes {:?}", start.elapsed());
     Ok(execution_outcomes)
 }

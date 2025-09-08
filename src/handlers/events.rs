@@ -1,8 +1,10 @@
+use std::time::Instant;
+
 use near_lake_framework::near_indexer_primitives;
 
+use crate::CONTRACT_ACCOUNT_IDS_OF_INTEREST;
 use crate::cache;
 use crate::types::{EventJson, EventRow};
-use crate::CONTRACT_ACCOUNT_IDS_OF_INTEREST;
 
 const EVENT_JSON_PREFIX: &str = "EVENT_JSON:";
 const EVENT_CLICKHOUSE_TABLE: &str = "events";
@@ -18,6 +20,7 @@ pub async fn handle_events(
     client: &clickhouse::Client,
     receipts_cache_arc: cache::ReceiptsCacheArc,
 ) -> anyhow::Result<()> {
+    let start = Instant::now();
     let receipts_cache_lock = receipts_cache_arc.lock().await;
     let rows: Vec<EventRow> = message
         .shards
@@ -55,6 +58,7 @@ pub async fn handle_events(
         tracing::error!("Error inserting rows into Clickhouse: {}", err);
         anyhow::bail!("Failed to insert rows into Clickhouse: {}", err)
     }
+    tracing::info!("handle_events {:?}", start.elapsed());
     Ok(())
 }
 
@@ -67,6 +71,7 @@ fn parse_event(
     header: &near_indexer_primitives::views::BlockHeaderView,
     parent_tx_hash: Option<String>,
 ) -> Option<EventRow> {
+    let start = Instant::now();
     let log_trimmed = log.trim();
 
     if log_trimmed.starts_with(EVENT_JSON_PREFIX) {
@@ -77,6 +82,7 @@ fn parse_event(
             if CONTRACT_ACCOUNT_IDS_OF_INTEREST.contains(&contract_id.as_str()) {
                 if log_trimmed.contains("dip4") || log_trimmed.contains("nep245") {
                     // println!("Event: {}", log_trimmed);
+                    tracing::debug!("parse_event {:?}", start.elapsed());
                     return Some(EventRow {
                         block_height: header.height,
                         block_timestamp: header.timestamp,
@@ -99,6 +105,7 @@ fn parse_event(
             }
         }
     }
+    tracing::debug!("parse_event {:?}", start.elapsed());
     None
 }
 

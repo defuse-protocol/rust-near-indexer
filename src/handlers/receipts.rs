@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use near_lake_framework::near_indexer_primitives::{self, near_primitives};
 
 use crate::{cache, types};
@@ -15,6 +17,7 @@ pub async fn handle_receipts(
     client: &clickhouse::Client,
     receipts_cache_arc: cache::ReceiptsCacheArc,
 ) -> anyhow::Result<()> {
+    let start = Instant::now();
     let receipts = extract_receipts(message, receipts_cache_arc.clone()).await?;
 
     if let Err(err) =
@@ -23,7 +26,7 @@ pub async fn handle_receipts(
         tracing::error!("Error inserting rows into Clickhouse: {}", err);
         anyhow::bail!("Failed to insert rows into Clickhouse: {}", err)
     }
-
+    tracing::info!("handle_receipts {:?}", start.elapsed());
     Ok(())
 }
 
@@ -31,6 +34,7 @@ async fn extract_receipts(
     message: &near_indexer_primitives::StreamerMessage,
     receipts_cache_arc: cache::ReceiptsCacheArc,
 ) -> anyhow::Result<Vec<types::ReceiptRow>> {
+    let start = Instant::now();
     let receipts_cache_lock = receipts_cache_arc.lock().await;
     let block_height = message.block.header.height;
     let block_timestamp = message.block.header.timestamp;
@@ -41,12 +45,12 @@ async fn extract_receipts(
         .filter_map(|shard| shard.chunk.as_ref())
         .flat_map(|chunk| chunk.receipts.iter().map(Clone::clone))
         .filter_map(|receipt| {
-            if let Some(_parent_tx_hash) = receipts_cache_lock.get(&types::ReceiptOrDataId::ReceiptId(receipt.receipt_id)) {
+            if let Some(parent_tx_hash) = receipts_cache_lock.get(&types::ReceiptOrDataId::ReceiptId(receipt.receipt_id)) {
                 Some(types::ReceiptRow{
                     block_height: block_height,
                     block_timestamp: block_timestamp,
                     block_hash: block_hash.clone(),
-                    parent_transaction_hash: _parent_tx_hash.to_string(),
+                    parent_transaction_hash: parent_tx_hash,
                     receipt_id: receipt.receipt_id.clone().to_string(),
                     receiver_id: receipt.receiver_id.clone().to_string(),
                     predecessor_id: receipt.predecessor_id.clone().to_string(),
@@ -72,9 +76,43 @@ async fn extract_receipts(
                     tracing::warn!("We don't watch for the this receipt but it is related to the account ids of interest, {}", receipt.receipt_id);
                     tracing::debug!("{:#?}", receipt.receipt);
                     crate::metrics::POTENTIAL_ASSET_MISS_TOTAL.with_label_values(&["receipts"]).inc();
-                }
 
-                None
+                    // We check the potential cache expecting to find a mapping there
+                    if let Some(parent_tx_hash) = receipts_cache_lock.potential_get(&types::ReceiptOrDataId::ReceiptId(receipt.receipt_id)) {
+                        // Protomote this cache entry to the main cache to catch the outcome
+                        receipts_cache_lock.set(types::ReceiptOrDataId::ReceiptId(receipt.receipt_id), parent_tx_hash.clone());
+
+                        tracing::info!("Found a potential mapping for receipt {} to transaction {}", receipt.receipt_id, parent_tx_hash);
+                        Some(types::ReceiptRow{
+                            block_height: block_height,
+                            block_timestamp: block_timestamp,
+                            block_hash: block_hash.clone(),
+                            parent_transaction_hash: parent_tx_hash,
+                            receipt_id: receipt.receipt_id.clone().to_string(),
+                            receiver_id: receipt.receiver_id.clone().to_string(),
+                            predecessor_id: receipt.predecessor_id.clone().to_string(),
+                            actions: match receipt.receipt {
+                                near_primitives::views::ReceiptEnumView::Action { ref actions, .. } => {
+                                    serde_json::to_string(
+                                        &actions.iter().map(|action| types::Action::from(action)).collect::<Vec<types::Action>>()
+                                    ).expect("Failed to serialize actions for receipt")
+                                },
+                                near_primitives::views::ReceiptEnumView::Data { ref data, .. } => {
+                                    serde_json::to_string(data).unwrap()
+                                },
+                                near_primitives::views::ReceiptEnumView::GlobalContractDistribution { .. } => {
+                                    "".to_string()
+                                },
+                            },
+                        })
+                    } else {
+                        tracing::warn!("No potential mapping found for receipt {}", receipt.receipt_id);
+                        // TODO: consider inc a metric for potential cache miss
+                        None
+                    }
+                } else {
+                    None
+                }
             }
         })
         .collect::<Vec<_>>();
@@ -93,5 +131,6 @@ async fn extract_receipts(
     crate::metrics::ASSETS_IN_BLOCK_CAPTURED_TOTAL
         .with_label_values(&["receipts"])
         .set(receipts.len() as i64);
+    tracing::info!("extract_receipts {:?}", start.elapsed());
     Ok(receipts)
 }

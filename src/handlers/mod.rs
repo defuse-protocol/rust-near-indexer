@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use clickhouse::Client;
 use futures::StreamExt;
 use tokio_stream::wrappers::ReceiverStream;
@@ -39,26 +41,26 @@ async fn handle_streamer_message(
     client: &Client,
     receipts_cache_arc: cache::ReceiptsCacheArc,
 ) -> anyhow::Result<()> {
+    let start = Instant::now();
     crate::metrics::LATEST_BLOCK_HEIGHT.set(message.block.header.height as i64);
-    tracing::debug!("Block: {}", message.block.header.height);
+    tracing::info!("Block: {}", message.block.header.height);
     // TODO: remove it after tests
     if message.block.header.height > 162389776 {
         std::process::exit(0);
     }
 
-    // let transactions_future =
+    // We always process transactions first to populate the cache
+    // with mappings from Receipt IDs to their parent Transaction hashes.
     transactions::handle_transactions(&message, client, receipts_cache_arc.clone()).await?;
+
+    // The rest of the handlers can be processed in parallel
+    let receipts_future = receipts::handle_receipts(&message, client, receipts_cache_arc.clone());
     let execution_outcomes_future =
         execution_outcomes::handle_execution_outcomes(&message, client, receipts_cache_arc.clone());
-    let receipts_future = receipts::handle_receipts(&message, client, receipts_cache_arc.clone());
     let events_future = events::handle_events(&message, client, receipts_cache_arc.clone());
 
-    futures::try_join!(
-        // transactions_future,
-        execution_outcomes_future,
-        receipts_future,
-        events_future
-    )?;
+    futures::try_join!(execution_outcomes_future, receipts_future, events_future)?;
     crate::metrics::BLOCK_PROCESSED_TOTAL.inc();
+    tracing::info!("handle_streamer_message {:?}", start.elapsed());
     Ok(())
 }

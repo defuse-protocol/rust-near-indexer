@@ -48,4 +48,25 @@ impl super::TxCache for RedisCache {
         let redis_key = Self::key_for_receipt(&key);
         let _ = conn.set_ex::<_, _, ()>(redis_key, value, self.ttl_seconds);
     }
+
+    fn potential_get(&self, key: &ReceiptOrDataId) -> Option<ParentTransactionHashString> {
+        let mut conn = match self.client.get_connection() {
+            Ok(c) => c,
+            Err(_) => return None,
+        };
+        let redis_key = format!("potential_cache:{:?}", key);
+        match conn.get(redis_key) {
+            Ok(val) => val,
+            Err(_) => None,
+        }
+    }
+
+    fn potential_set(&self, key: ReceiptOrDataId, value: ParentTransactionHashString) {
+        let mut conn = match self.client.get_connection() {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        let redis_key = format!("potential_cache:{:?}", key);
+        let _ = conn.set_ex::<_, _, ()>(redis_key, value, self.ttl_seconds);
+    }
 }
