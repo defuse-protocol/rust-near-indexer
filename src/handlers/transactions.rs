@@ -124,7 +124,7 @@ async fn parse_transactions(
         // Later, while Receipt will be looking for a parent Transaction hash
         // it will be able to find it in the ReceiptsCache
         receipts_cache_arc
-            .lock()
+            .write()
             .await
             .set(
                 types::ReceiptOrDataId::ReceiptId(*converted_into_receipt_id),
@@ -157,7 +157,7 @@ async fn parse_transactions(
             converted_into_receipt_id,
         );
         receipts_cache_arc
-            .lock()
+            .write()
             .await
             .potential_set(
                 types::ReceiptOrDataId::ReceiptId(*converted_into_receipt_id),

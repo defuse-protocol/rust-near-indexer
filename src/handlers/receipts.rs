@@ -86,7 +86,7 @@ async fn parse_receipt(
     block_hash: String,
     receipts_cache_arc: cache::ReceiptsCacheArc,
 ) -> Option<types::ReceiptRow> {
-    let mut cache = receipts_cache_arc.lock().await;
+    let mut cache = receipts_cache_arc.write().await;
     if let Some(parent_tx_hash) = cache
         .get(&types::ReceiptOrDataId::ReceiptId(receipt.receipt_id))
         .await
@@ -107,10 +107,16 @@ async fn parse_receipt(
                             .map(types::Action::from)
                             .collect::<Vec<types::Action>>(),
                     )
-                    .expect("Failed to serialize actions for receipt")
+                    .unwrap_or_else(|e| {
+                        tracing::error!("Failed to serialize actions for receipt: {}", e);
+                        "[]".to_string()
+                    })
                 }
                 near_primitives::views::ReceiptEnumView::Data { ref data, .. } => {
-                    serde_json::to_string(data).unwrap()
+                    serde_json::to_string(data).unwrap_or_else(|e| {
+                        tracing::warn!("Failed to serialize receipt data: {}", e);
+                        "null".to_string()
+                    })
                 }
                 near_primitives::views::ReceiptEnumView::GlobalContractDistribution { .. } => {
                     "".to_string()
@@ -166,7 +172,10 @@ async fn parse_receipt(
                         .expect("Failed to serialize actions for receipt")
                     }
                     near_primitives::views::ReceiptEnumView::Data { ref data, .. } => {
-                        serde_json::to_string(data).unwrap()
+                        serde_json::to_string(data).unwrap_or_else(|e| {
+                            tracing::warn!("Failed to serialize receipt data: {}", e);
+                            "null".to_string()
+                        })
                     }
                     near_primitives::views::ReceiptEnumView::GlobalContractDistribution {
                         ..

@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 
 use crate::types::{ParentTransactionHashString, ReceiptOrDataId};
 
@@ -21,16 +21,16 @@ pub trait TxCache: Send + Sync {
     async fn potential_set(&mut self, key: ReceiptOrDataId, value: ParentTransactionHashString);
 }
 
-pub type ReceiptsCacheArc = Arc<Mutex<Box<dyn TxCache + Send + Sync>>>;
+pub type ReceiptsCacheArc = Arc<RwLock<Box<dyn TxCache + Send + Sync>>>;
 
 pub async fn init_cache(app_config: &crate::config::AppConfig) -> anyhow::Result<ReceiptsCacheArc> {
     if let Some(redis_url) = &app_config.redis_url {
         let redis_cache = redis::RedisCache::new(redis_url, app_config.redis_ttl_seconds).await?;
         tracing::info!("Initialized Redis cache");
-        Ok(Arc::new(Mutex::new(Box::new(redis_cache))))
+        Ok(Arc::new(RwLock::new(Box::new(redis_cache))))
     } else {
         tracing::warn!("Initialized local in-memory cache");
         let local_cache = local::LocalCache::new(100_000)?;
-        Ok(Arc::new(Mutex::new(Box::new(local_cache))))
+        Ok(Arc::new(RwLock::new(Box::new(local_cache))))
     }
 }

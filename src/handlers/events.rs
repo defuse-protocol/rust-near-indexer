@@ -31,7 +31,7 @@ pub async fn handle_events(
         .enumerate()
     {
         let parent_tx_hash = receipts_cache_arc
-            .lock()
+            .write()
             .await
             .get(&crate::types::ReceiptOrDataId::ReceiptId(
                 outcome.receipt.receipt_id,

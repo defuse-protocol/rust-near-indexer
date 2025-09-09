@@ -72,7 +72,7 @@ async fn extract_execution_outcomes(
 
     // Add receipts that are going to be created by ExecutionOutcome to the cache (receipt-transaction matcher)
     tracing::debug!("Lock cache to set receipt-transaction mappings 1");
-    let mut cache = receipts_cache_arc.lock().await;
+    let mut cache = receipts_cache_arc.write().await;
     for outcome in &execution_outcomes {
         for receipt_id in &outcome.receipt_ids {
             cache
@@ -90,7 +90,7 @@ async fn extract_execution_outcomes(
 
     // Potential cache
     tracing::debug!("Lock cache to set receipt-transaction mappings 2");
-    let mut cache = receipts_cache_arc.lock().await;
+    let mut cache = receipts_cache_arc.write().await;
     for outcome in message
         .shards
         .iter()
@@ -148,7 +148,7 @@ async fn parse_execution_outcome(
     block_hash: String,
     receipts_cache_arc: cache::ReceiptsCacheArc,
 ) -> Option<types::ExecutionOutcomeRow> {
-    let mut cache = receipts_cache_arc.lock().await;
+    let mut cache = receipts_cache_arc.write().await;
     if let Some(parent_tx_hash) = cache
         .get(&types::ReceiptOrDataId::ReceiptId(
             outcome.receipt.receipt_id,
@@ -201,7 +201,7 @@ async fn parse_execution_outcome(
         {
             // Promote this cache entry to the main cache
             receipts_cache_arc
-                .lock()
+                .write()
                 .await
                 .set(
                     types::ReceiptOrDataId::ReceiptId(outcome.receipt.receipt_id),
