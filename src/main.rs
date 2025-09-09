@@ -26,7 +26,7 @@ async fn main() -> anyhow::Result<()> {
 
     let block_height: u64 = config.block_height;
 
-    let last_height = get_last_height(&client).await.unwrap_or(0);
+    let last_height = get_last_height(&client).await?;
     let start_block = if config.force_from_block_height {
         tracing::warn!("Forcing reindex from block height: {}", block_height);
         block_height
