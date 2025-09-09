@@ -49,7 +49,7 @@ async fn main() -> anyhow::Result<()> {
     //     .build()
     //     .expect("Error creating NEAR Lake framework config");
 
-    let receipts_cache_arc: cache::ReceiptsCacheArc = cache::init_cache(&config)?;
+    let receipts_cache_arc: cache::ReceiptsCacheArc = cache::init_cache(&config).await?;
 
     // Initiate metrics http server
     if config.metrics_basic_auth_user.is_some() && config.metrics_basic_auth_password.is_some() {

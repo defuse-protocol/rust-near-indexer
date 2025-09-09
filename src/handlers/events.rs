@@ -22,44 +22,37 @@ pub async fn handle_events(
     receipts_cache_arc: cache::ReceiptsCacheArc,
 ) -> anyhow::Result<()> {
     let start = Instant::now();
-    let receipts_cache = receipts_cache_arc.clone();
 
-    let event_futures = message
+    let mut event_futures = Vec::new();
+    for (index, outcome) in message
         .shards
         .iter()
         .flat_map(|shard| shard.receipt_execution_outcomes.iter())
         .enumerate()
-        .map(|(index, outcome)| {
-            let parent_tx_hash = receipts_cache.get(&crate::types::ReceiptOrDataId::ReceiptId(
+    {
+        let parent_tx_hash = receipts_cache_arc
+            .lock()
+            .await
+            .get(&crate::types::ReceiptOrDataId::ReceiptId(
                 outcome.receipt.receipt_id,
+            ))
+            .await;
+        let tx_hash = parent_tx_hash.clone();
+        for (index_in_log, log) in outcome.execution_outcome.outcome.logs.iter().enumerate() {
+            event_futures.push(parse_event(
+                index_in_log,
+                log,
+                outcome,
+                &message.block.header,
+                tx_hash.clone(),
+                index as u64,
             ));
-            let tx_hash = parent_tx_hash.clone();
-            (tx_hash, outcome, index as u64)
-        })
-        .flat_map(|(tx_hash, outcome, index)| {
-            outcome
-                .execution_outcome
-                .outcome
-                .logs
-                .iter()
-                .enumerate()
-                .map(move |(index_in_log, log)| {
-                    // Assuming parse_event is now async and returns a Future<Option<EventRow>>
-                    parse_event(
-                        index_in_log,
-                        log,
-                        outcome,
-                        &message.block.header,
-                        tx_hash.clone(),
-                        index,
-                    )
-                })
-        });
+        }
+    }
 
     let event_results: Vec<Option<EventRow>> = join_all(event_futures).await;
     let rows: Vec<EventRow> = event_results.into_iter().flatten().collect();
 
-    drop(receipts_cache);
     if let Err(err) = crate::database::insert_rows(client, EVENT_CLICKHOUSE_TABLE, &rows).await {
         crate::metrics::STORE_ERRORS_TOTAL.inc();
         tracing::error!("Error inserting rows into Clickhouse: {}", err);

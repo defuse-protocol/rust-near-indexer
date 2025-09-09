@@ -22,23 +22,27 @@ impl LocalCache {
     }
 }
 
+#[async_trait::async_trait]
 impl super::TxCache for LocalCache {
-    fn get(&self, key: &ReceiptOrDataId) -> Option<ParentTransactionHashString> {
+    async fn get(&mut self, key: &ReceiptOrDataId) -> Option<ParentTransactionHashString> {
         let mut cache = self.watchlist_cache.lock().unwrap();
         cache.cache_get(key).cloned()
     }
 
-    fn set(&self, key: ReceiptOrDataId, value: ParentTransactionHashString) {
+    async fn set(&mut self, key: ReceiptOrDataId, value: ParentTransactionHashString) {
         let mut cache = self.watchlist_cache.lock().unwrap();
         cache.cache_set(key, value);
     }
 
-    fn potential_get(&self, key: &ReceiptOrDataId) -> Option<ParentTransactionHashString> {
+    async fn potential_get(
+        &mut self,
+        key: &ReceiptOrDataId,
+    ) -> Option<ParentTransactionHashString> {
         let mut cache = self.potential_cache.lock().unwrap();
         cache.cache_get(key).cloned()
     }
 
-    fn potential_set(&self, key: ReceiptOrDataId, value: ParentTransactionHashString) {
+    async fn potential_set(&mut self, key: ReceiptOrDataId, value: ParentTransactionHashString) {
         let mut cache = self.potential_cache.lock().unwrap();
         cache.cache_set(key, value);
     }

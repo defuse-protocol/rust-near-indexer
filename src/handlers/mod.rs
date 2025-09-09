@@ -49,13 +49,11 @@ async fn handle_streamer_message(
     // with mappings from Receipt IDs to their parent Transaction hashes.
     transactions::handle_transactions(&message, client, receipts_cache_arc.clone()).await?;
 
-    // The rest of the handlers can be processed in parallel
-    let receipts_future = receipts::handle_receipts(&message, client, receipts_cache_arc.clone());
-    let execution_outcomes_future =
-        execution_outcomes::handle_execution_outcomes(&message, client, receipts_cache_arc.clone());
-    let events_future = events::handle_events(&message, client, receipts_cache_arc.clone());
+    receipts::handle_receipts(&message, client, receipts_cache_arc.clone()).await?;
+    execution_outcomes::handle_execution_outcomes(&message, client, receipts_cache_arc.clone())
+        .await?;
+    events::handle_events(&message, client, receipts_cache_arc.clone()).await?;
 
-    futures::try_join!(execution_outcomes_future, receipts_future, events_future)?;
     crate::metrics::BLOCK_PROCESSED_TOTAL.inc();
     tracing::info!("handle_streamer_message {:?}", start.elapsed());
     Ok(())

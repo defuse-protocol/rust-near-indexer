@@ -1,11 +1,10 @@
-use redis::Commands;
-use tokio::task;
+use redis::AsyncCommands;
 
 use crate::types::{ParentTransactionHashString, ReceiptOrDataId};
 
 /// Redis-backed cache implementation.
 pub struct RedisCache {
-    client: redis::Client,
+    manager: redis::aio::ConnectionManager,
     ttl_seconds: u64,
 }
 
@@ -15,10 +14,10 @@ impl RedisCache {
     /// # Arguments
     /// * `url` - Redis server URL
     /// * `ttl_seconds` - TTL for cached values in seconds
-    pub fn new(url: &str, ttl_seconds: u64) -> anyhow::Result<Self> {
+    pub async fn new(url: &str, ttl_seconds: u64) -> anyhow::Result<Self> {
         let client = redis::Client::open(url)?;
         Ok(Self {
-            client,
+            manager: client.get_connection_manager().await?,
             ttl_seconds,
         })
     }
@@ -37,66 +36,38 @@ impl RedisCache {
             ReceiptOrDataId::_DataId(h) => h.to_string(),
         }
     }
-
-    /// Run a blocking closure in a way that doesn't block the Tokio runtime worker threads.
-    /// If called within a Tokio runtime, `block_in_place` is used to offload to the blocking pool.
-    fn run_blocking<F, R>(f: F) -> R
-    where
-        F: FnOnce() -> R + Send,
-        R: Send,
-    {
-        // If we're inside a Tokio runtime, boost to the blocking pool to avoid starving the runtime.
-        if tokio::runtime::Handle::try_current().is_ok() {
-            task::block_in_place(f)
-        } else {
-            // Not inside a Tokio runtime (e.g., during startup tests) — run directly.
-            f()
-        }
-    }
 }
 
+#[async_trait::async_trait]
 impl super::TxCache for RedisCache {
-    fn get(&self, key: &ReceiptOrDataId) -> Option<ParentTransactionHashString> {
-        Self::run_blocking(|| {
-            let mut conn = match self.client.get_connection() {
-                Ok(c) => c,
-                Err(_) => return None,
-            };
-            let redis_key = Self::key_for_receipt(key);
-            conn.get(redis_key).unwrap_or_default()
-        })
+    async fn get(&mut self, key: &ReceiptOrDataId) -> Option<ParentTransactionHashString> {
+        let conn = &mut self.manager;
+        let redis_key = Self::key_for_receipt(key);
+        conn.get(redis_key).await.unwrap_or_default()
     }
 
-    fn set(&self, key: ReceiptOrDataId, value: ParentTransactionHashString) {
-        Self::run_blocking(|| {
-            let mut conn = match self.client.get_connection() {
-                Ok(c) => c,
-                Err(_) => return,
-            };
-            let redis_key = Self::key_for_receipt(&key);
-            let _ = conn.set_ex::<_, _, ()>(redis_key, value, self.ttl_seconds);
-        })
+    async fn set(&mut self, key: ReceiptOrDataId, value: ParentTransactionHashString) {
+        let conn = &mut self.manager;
+        let redis_key = Self::key_for_receipt(&key);
+        let _ = conn
+            .set_ex::<_, _, ()>(redis_key, value, self.ttl_seconds)
+            .await;
     }
 
-    fn potential_get(&self, key: &ReceiptOrDataId) -> Option<ParentTransactionHashString> {
-        Self::run_blocking(|| {
-            let mut conn = match self.client.get_connection() {
-                Ok(c) => c,
-                Err(_) => return None,
-            };
-            let redis_key = Self::key_for_potential(key);
-            conn.get(redis_key).unwrap_or_default()
-        })
+    async fn potential_get(
+        &mut self,
+        key: &ReceiptOrDataId,
+    ) -> Option<ParentTransactionHashString> {
+        let conn = &mut self.manager;
+        let redis_key = Self::key_for_potential(key);
+        conn.get(redis_key).await.unwrap_or_default()
     }
 
-    fn potential_set(&self, key: ReceiptOrDataId, value: ParentTransactionHashString) {
-        Self::run_blocking(|| {
-            let mut conn = match self.client.get_connection() {
-                Ok(c) => c,
-                Err(_) => return,
-            };
-            let redis_key = Self::key_for_potential(&key);
-            let _ = conn.set_ex::<_, _, ()>(redis_key, value, self.ttl_seconds);
-        })
+    async fn potential_set(&mut self, key: ReceiptOrDataId, value: ParentTransactionHashString) {
+        let conn = &mut self.manager;
+        let redis_key = Self::key_for_potential(&key);
+        let _ = conn
+            .set_ex::<_, _, ()>(redis_key, value, self.ttl_seconds)
+            .await;
     }
 }
