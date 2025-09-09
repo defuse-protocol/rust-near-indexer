@@ -1,4 +1,3 @@
-use base64::{self, Engine};
 use clickhouse::Row;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -80,125 +79,38 @@ pub struct ExecutionOutcomeRow {
 }
 
 #[derive(Serialize)]
-pub struct Action {
-    pub action_type: String,
-    pub params: serde_json::Value,
+#[serde(tag = "action_type", content = "params")]
+pub enum Action {
+    CreateAccount(near_primitives::action::CreateAccountAction),
+    DeployContract(near_primitives::action::DeployContractAction),
+    FunctionCall(Box<near_primitives::action::FunctionCallAction>),
+    Transfer(near_primitives::action::TransferAction),
+    Stake(Box<near_primitives::action::StakeAction>),
+    AddKey(Box<near_primitives::action::AddKeyAction>),
+    DeleteKey(Box<near_primitives::action::DeleteKeyAction>),
+    DeleteAccount(near_primitives::action::DeleteAccountAction),
+    Delegate(Box<near_primitives::action::delegate::SignedDelegateAction>),
+    DeployGlobalContract(near_primitives::action::DeployGlobalContractAction),
+    UseGlobalContract(Box<near_primitives::action::UseGlobalContractAction>),
 }
 
 impl From<&near_primitives::views::ActionView> for Action {
     fn from(action: &near_primitives::views::ActionView) -> Self {
+        let action: near_primitives::action::Action = action.clone().try_into().unwrap();
         match action {
-            near_primitives::views::ActionView::CreateAccount => Action {
-                action_type: "CreateAccount".to_string(),
-                params: serde_json::json!({}),
-            },
-            near_primitives::views::ActionView::DeployContract { .. } => Action {
-                action_type: "DeployContract".to_string(),
-                params: serde_json::json!({}), // code might be too big and we don't need it at all
-            },
-            near_primitives::views::ActionView::FunctionCall {
-                method_name,
-                args,
-                gas,
-                deposit,
-            } => Action {
-                action_type: "FunctionCall".to_string(),
-                params: serde_json::json!({
-                    "method_name": method_name,
-                    "args": match serde_json::from_slice::<serde_json::Value>(args) {
-                        Ok(json) => json,
-                        Err(_) => serde_json::json!(base64::engine::general_purpose::STANDARD.encode(args.as_slice())),
-                    },
-                    "gas": gas.to_string(),
-                    "deposit": deposit.to_string(),
-                }),
-            },
-            near_primitives::views::ActionView::Transfer { deposit } => Action {
-                action_type: "Transfer".to_string(),
-                params: serde_json::json!({
-                    "deposit": deposit.to_string(),
-                }),
-            },
-            near_primitives::views::ActionView::Stake { stake, public_key } => Action {
-                action_type: "Stake".to_string(),
-                params: serde_json::json!({
-                    "stake": stake.to_string(),
-                    "public_key": public_key.to_string(),
-                }),
-            },
-            near_primitives::views::ActionView::AddKey {
-                public_key,
-                access_key,
-            } => {
-                let permission = match &access_key.permission {
-                    near_primitives::views::AccessKeyPermissionView::FullAccess => {
-                        serde_json::json!("FullAccess")
-                    }
-                    near_primitives::views::AccessKeyPermissionView::FunctionCall {
-                        allowance,
-                        receiver_id,
-                        method_names,
-                    } => serde_json::json!({
-                        "allowance": allowance.map(|a| a.to_string()),
-                        "receiver_id": receiver_id,
-                        "method_names": method_names,
-                    }),
-                };
-                Action {
-                    action_type: "AddKey".to_string(),
-                    params: serde_json::json!({
-                        "public_key": public_key.to_string(),
-                        "access_key": {
-                            "nonce": access_key.nonce,
-                            "permission": permission,
-                        },
-                    }),
-                }
+            near_primitives::action::Action::CreateAccount(a) => Action::CreateAccount(a),
+            near_primitives::action::Action::DeployContract(a) => Action::DeployContract(a),
+            near_primitives::action::Action::FunctionCall(a) => Action::FunctionCall(a),
+            near_primitives::action::Action::Transfer(a) => Action::Transfer(a),
+            near_primitives::action::Action::Stake(a) => Action::Stake(a),
+            near_primitives::action::Action::AddKey(a) => Action::AddKey(a),
+            near_primitives::action::Action::DeleteKey(a) => Action::DeleteKey(a),
+            near_primitives::action::Action::DeleteAccount(a) => Action::DeleteAccount(a),
+            near_primitives::action::Action::Delegate(a) => Action::Delegate(a),
+            near_primitives::action::Action::DeployGlobalContract(a) => {
+                Action::DeployGlobalContract(a)
             }
-            near_primitives::views::ActionView::DeleteKey { public_key } => Action {
-                action_type: "DeleteKey".to_string(),
-                params: serde_json::json!({
-                    "public_key": public_key.to_string(),
-                }),
-            },
-            near_primitives::views::ActionView::DeleteAccount { beneficiary_id } => Action {
-                action_type: "DeleteAccount".to_string(),
-                params: serde_json::json!({
-                    "beneficiary_id": beneficiary_id.to_string(),
-                }),
-            },
-            near_primitives::views::ActionView::Delegate {
-                delegate_action,
-                signature,
-            } => Action {
-                action_type: "Delegate".to_string(),
-                params: serde_json::json!({
-                    "delegate_action": serde_json::to_value(delegate_action).unwrap_or(serde_json::json!({})),
-                    "signature": signature.to_string(),
-                }),
-            },
-            near_primitives::views::ActionView::DeployGlobalContract { .. } => Action {
-                action_type: "DeployGlobalContract".to_string(),
-                params: serde_json::json!({}),
-            },
-            near_primitives::views::ActionView::DeployGlobalContractByAccountId { .. } => Action {
-                action_type: "DeployGlobalContractByAccountId".to_string(),
-                params: serde_json::json!({}),
-            },
-            near_primitives::views::ActionView::UseGlobalContract { code_hash } => Action {
-                action_type: "UseGlobalContract".to_string(),
-                params: serde_json::json!({
-                    "code_hash": code_hash.to_string(),
-                }),
-            },
-            near_primitives::views::ActionView::UseGlobalContractByAccountId { account_id } => {
-                Action {
-                    action_type: "UseGlobalContractByAccountId".to_string(),
-                    params: serde_json::json!({
-                        "account_id": account_id.to_string(),
-                    }),
-                }
-            }
+            near_primitives::action::Action::UseGlobalContract(a) => Action::UseGlobalContract(a),
         }
     }
 }
