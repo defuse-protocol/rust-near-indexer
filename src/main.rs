@@ -1,5 +1,3 @@
-use std::env;
-
 use clap::Parser;
 #[macro_use]
 extern crate lazy_static;
@@ -26,13 +24,15 @@ async fn main() -> anyhow::Result<()> {
 
     let client = init_clickhouse_client(&config);
 
-    let block_height: u64 = env::var("BLOCK_HEIGHT")
-        .expect("Invalid env var BLOCK_HEIGHT")
-        .parse()
-        .expect("Failed to parse BLOCK_HEIGHT");
+    let block_height: u64 = config.block_height;
 
     let last_height = get_last_height(&client).await.unwrap_or(0);
-    let start_block = block_height.max(last_height + 1);
+    let start_block = if config.force_from_block_height {
+        tracing::warn!("Forcing reindex from block height: {}", block_height);
+        block_height
+    } else {
+        std::cmp::max(block_height, last_height + 1)
+    };
 
     tracing::info!("Starting indexer at block height: {}", start_block);
 
