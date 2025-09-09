@@ -24,14 +24,6 @@ pub struct AppConfig {
     #[clap(long, env = "REDIS_URL")]
     pub redis_url: Option<String>,
 
-    /// Redis username (env: REDIS_USER)
-    #[clap(long, env = "REDIS_USER")]
-    pub redis_user: Option<String>,
-
-    /// Redis password (env: REDIS_PASSWORD)
-    #[clap(long, env = "REDIS_PASSWORD")]
-    pub redis_password: Option<String>,
-
     /// Redis cache TTL in seconds (env: REDIS_TTL_SECONDS, default: 900)
     #[clap(long, env = "REDIS_TTL_SECONDS", default_value = "900")]
     pub redis_ttl_seconds: u64,
@@ -41,11 +33,19 @@ pub struct AppConfig {
     pub metrics_server_port: u16,
 
     /// Metrics server basic auth username (env: METRICS_BASIC_AUTH_USER)
-    #[clap(long, env = "METRICS_BASIC_AUTH_USER")]
+    #[clap(
+        long,
+        env = "METRICS_BASIC_AUTH_USER",
+        requires = "metrics_basic_auth_password"
+    )]
     pub metrics_basic_auth_user: Option<String>,
 
     /// Metrics server basic auth password (env: METRICS_BASIC_AUTH_PASSWORD)
-    #[clap(long, env = "METRICS_BASIC_AUTH_PASSWORD")]
+    #[clap(
+        long,
+        env = "METRICS_BASIC_AUTH_PASSWORD",
+        requires = "metrics_basic_auth_user"
+    )]
     pub metrics_basic_auth_password: Option<String>,
 }
 

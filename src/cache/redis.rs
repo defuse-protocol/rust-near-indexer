@@ -43,7 +43,16 @@ impl super::TxCache for RedisCache {
     async fn get(&mut self, key: &ReceiptOrDataId) -> Option<ParentTransactionHashString> {
         let conn = &mut self.manager;
         let redis_key = Self::key_for_receipt(key);
-        conn.get(redis_key).await.unwrap_or_default()
+        match conn
+            .get::<_, Option<ParentTransactionHashString>>(&redis_key)
+            .await
+        {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!("Redis GET failed for key={}: {}", redis_key, e);
+                None
+            }
+        }
     }
 
     async fn set(&mut self, key: ReceiptOrDataId, value: ParentTransactionHashString) {
@@ -60,7 +69,16 @@ impl super::TxCache for RedisCache {
     ) -> Option<ParentTransactionHashString> {
         let conn = &mut self.manager;
         let redis_key = Self::key_for_potential(key);
-        conn.get(redis_key).await.unwrap_or_default()
+        match conn
+            .get::<_, Option<ParentTransactionHashString>>(&redis_key)
+            .await
+        {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!("Redis GET failed for key={}: {}", redis_key, e);
+                None
+            }
+        }
     }
 
     async fn potential_set(&mut self, key: ReceiptOrDataId, value: ParentTransactionHashString) {
