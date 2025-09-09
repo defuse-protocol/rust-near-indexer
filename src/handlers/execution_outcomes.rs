@@ -78,7 +78,12 @@ async fn extract_execution_outcomes(
             cache
                 .set(
                     types::ReceiptOrDataId::ReceiptId(
-                        near_primitives::hash::CryptoHash::from_str(receipt_id).unwrap(),
+                        near_primitives::hash::CryptoHash::from_str(receipt_id).unwrap_or_else(
+                            |e| {
+                                tracing::error!("Failed to parse receipt ID {}: {}", receipt_id, e);
+                                near_primitives::hash::CryptoHash::default()
+                            },
+                        ),
                     ),
                     outcome.parent_transaction_hash.clone(),
                 )

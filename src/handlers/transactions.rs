@@ -143,7 +143,7 @@ async fn parse_transactions(
                 &tx.transaction
                     .actions
                     .iter()
-                    .map(types::Action::from)
+                    .flat_map(types::Action::try_from)
                     .collect::<Vec<types::Action>>(),
             )
             .expect("Failed to serialize actions for transaction"),

@@ -104,7 +104,7 @@ async fn parse_receipt(
                     serde_json::to_string(
                         &actions
                             .iter()
-                            .map(types::Action::from)
+                            .flat_map(types::Action::try_from)
                             .collect::<Vec<types::Action>>(),
                     )
                     .unwrap_or_else(|e| {
@@ -166,7 +166,7 @@ async fn parse_receipt(
                         serde_json::to_string(
                             &actions
                                 .iter()
-                                .map(types::Action::from)
+                                .flat_map(types::Action::try_from)
                                 .collect::<Vec<types::Action>>(),
                         )
                         .expect("Failed to serialize actions for receipt")

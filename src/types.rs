@@ -94,10 +94,13 @@ pub enum Action {
     UseGlobalContract(Box<near_primitives::action::UseGlobalContractAction>),
 }
 
-impl From<&near_primitives::views::ActionView> for Action {
-    fn from(action: &near_primitives::views::ActionView) -> Self {
-        let action: near_primitives::action::Action = action.clone().try_into().unwrap();
-        match action {
+impl TryFrom<&near_primitives::views::ActionView> for Action {
+    type Error = anyhow::Error;
+    fn try_from(action: &near_primitives::views::ActionView) -> Result<Self, Self::Error> {
+        let action: near_primitives::action::Action =
+            action.clone().try_into().map_err(anyhow::Error::msg)?;
+
+        Ok(match action {
             near_primitives::action::Action::CreateAccount(a) => Action::CreateAccount(a),
             near_primitives::action::Action::DeployContract(a) => Action::DeployContract(a),
             near_primitives::action::Action::FunctionCall(a) => Action::FunctionCall(a),
@@ -111,6 +114,6 @@ impl From<&near_primitives::views::ActionView> for Action {
                 Action::DeployGlobalContract(a)
             }
             near_primitives::action::Action::UseGlobalContract(a) => Action::UseGlobalContract(a),
-        }
+        })
     }
 }
