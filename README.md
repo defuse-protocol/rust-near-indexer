@@ -11,7 +11,7 @@ This project is a Rust-based indexer that processes blockchain events from NEAR 
 
 ## Requirements
 
-1. [Rust](https://www.rust-lang.org/tools/install) (1.76.0 version recommended)
+1. [Rust](https://www.rust-lang.org/tools/install) (1.86.0 version recommended)
 2. [Clickhouse](https://clickhouse.com/docs/en/quick-start#self-managed-install) database server
 3. Environment variables for configuration
 
@@ -24,61 +24,101 @@ cargo build --release
 ## Environment Configuration
 
 Before running the indexer, ensure that all required environment variables are set:
+The indexer is configured via environment variables. The table below lists the most commonly used options. Values marked REQUIRED must be provided; others have sensible defaults or are optional depending on features you use.
 
-| Variable                | Description                     | Default Value            |
-| ----------------------- | ------------------------------- | ------------------------ |
-| `CLICKHOUSE_URL`        | Clickhouse server URL           | `http://localhost:18123` |
-| `CLICKHOUSE_USER`       | Username for Clickhouse         | -                        |
-| `CLICKHOUSE_PASSWORD`   | Password for Clickhouse         | -                        |
-| `CLICKHOUSE_DB`         | Clickhouse database name        | `mainnet`                |
-| `BLOCK_HEIGHT`          | Start block height for indexing | -                        |
-| `AWS_ACCESS_KEY_ID`     | AWS access key ID               | -                        |
-| `AWS_SECRET_ACCESS_KEY` | AWS secret access key           | -                        |
-| `REDIS_URL`             | Redis connection URL (optional) | -                        |
+| Variable                | Required | Description |
+|-------------------------|:--------:|-------------|
+| `CLICKHOUSE_URL`        |    Yes   | Clickhouse server URL (e.g. `http://localhost:18123`) |
+| `CLICKHOUSE_USER`       |    Yes   | Clickhouse username |
+| `CLICKHOUSE_PASSWORD`   |    Yes   | Clickhouse password |
+| `CLICKHOUSE_DATABASE`   |    Yes   | Clickhouse database name (default: `mainnet`) |
+| `BLOCK_HEIGHT`          |    No    | Start block height for indexing — if unset the indexer resumes from last saved state |
+| `AWS_ACCESS_KEY_ID`     |    No    | Required only when using AWS S3/Lake storage for NEAR lake input |
+| `AWS_SECRET_ACCESS_KEY` |    No    | Required only when using AWS S3/Lake storage for NEAR lake input |
+| `REDIS_URL`             |    No    | Redis connection URL for caching (optional) |
 
-Example of setting up environment variables (replace with your actual values):
+Quick examples:
+
+Create a `.env` file (example):
 
 ```bash
-export CLICKHOUSE_URL="http://localhost:18123"
-export CLICKHOUSE_USER="<your-clickhouse-username>"
-export CLICKHOUSE_PASSWORD="<your-clickhouse-password>"
-export CLICKHOUSE_DB="mainnet"
-export BLOCK_HEIGHT="130636886"
-export AWS_ACCESS_KEY_ID="<your-aws-access-key-id>"
-export AWS_SECRET_ACCESS_KEY="<your-aws-secret-access-key>"
-export REDIS_URL="redis://127.0.0.1:6379"
+# .env
+CLICKHOUSE_URL="http://localhost:18123"
+CLICKHOUSE_DATABASE="mainnet"
+CLICKHOUSE_USER="clickhouse"
+CLICKHOUSE_PASSWORD="secret"
+AWS_ACCESS_KEY_ID="your_aws_access_key_id"
+AWS_SECRET_ACCESS_KEY="your_aws_secret_access_key"
+# optional:
+# REDIS_URL="redis://127.0.0.1:6379"
+# BLOCK_HEIGHT="130636886"
 ```
+
+Load the `.env` and run (POSIX shell):
+
+```bash
+export $(grep -v '^#' .env | xargs)
+cargo run --release
+```
+
+Notes:
+- If you use NEAR Lake with S3, provide AWS credentials or an appropriate IAM role.
+- `REDIS_URL` is optional and used for the transaction cache; leave unset to disable Redis caching.
 
 ## Usage
 
-1. Start the Clickhouse server.
-2. Run the application:
+Prerequisites
+- Clickhouse server running and reachable via `CLICKHOUSE_URL`.
+- (Optional) Redis server if using caching.
 
-   ```bash
-   cargo run --release
-   ```
+Basic run (development / single-run):
 
-The application will:
+```bash
+cargo run --release
+```
 
-- Connect to the Clickhouse server.
-- Start reading blockchain events from the specified `BLOCK_HEIGHT` (or the last processed height).
-- Filter and insert selected events into the Clickhouse database.
-
-### Optional Command-line Execution
-
-You can pass `BLOCK_HEIGHT` when running the program to override the default or previously set block height.
+Override the start block on the fly:
 
 ```bash
 BLOCK_HEIGHT=130636886 cargo run --release
 ```
+
+Deployment suggestions
+- For production runs consider running the binary as a systemd service, in a container, or using a process supervisor so it restarts on failure.
+- Ensure Clickhouse and Redis (if used) are configured for persistent storage and appropriate resource limits.
+
+What the indexer does
+- Connects to the NEAR stream, decodes events, and writes structured rows into Clickhouse tables defined in this README.
+- Persists a small transaction cache to Redis (if `REDIS_URL` is provided) to deduplicate work across blocks.
+
+Logging and metrics
+- The indexer emits logs (see `RUST_LOG` environment variable to control level). Use `RUST_LOG=info` or `debug` while developing.
+- Metrics are exported for monitoring (see `metrics.rs` in `src/` for details). Hook Prometheus to the exposed endpoint if you run metrics collection.
 
 ## Project Structure
 
 The project is structured as follows:
 
 - `main.rs`: Initializes the application, connects to Clickhouse, and starts the indexer.
-- `database.rs`: Contains functions for connecting to Clickhouse and managing data.
-- `event_handler.rs`: Processes streamed events and filters specific event standards.
+The project layout (top-level `src/` files):
+
+- `main.rs` — application entrypoint: loads configuration, starts runtime, wires components.
+- `database.rs` — Clickhouse connectivity, schema helper code and insert helpers.
+- `handlers/` — event handling code split per artifact (events, receipts, transactions, outcomes).
+- `metrics.rs` — Prometheus / metrics instrumentation.
+- `cache/` — transaction cache implementations (local / redis-backed).
+
+Editing and extending
+- Add new materialized views or tables to the schema section below. If you add a table referenced by a view, keep names consistent.
+
+Troubleshooting
+- Connection refused to Clickhouse: verify `CLICKHOUSE_URL` and that Clickhouse is running and reachable from the host.
+- Authentication errors: check `CLICKHOUSE_USER`/`CLICKHOUSE_PASSWORD` and Clickhouse user grants.
+- High memory/CPU in Clickhouse: tune Clickhouse server settings or reduce ingestion concurrency.
+
+Contributing
+- Open a PR on the `feat/potential-cache` or relevant branch, make small focused changes, and include tests where reasonable.
+- Update this README if you add configuration variables or change runtime behavior.
 
 ## Clickhouse schema
 
@@ -97,377 +137,405 @@ CREATE TABLE defuse_assets (
 PRIMARY KEY (defuse_asset_id, price_updated_at)
 ORDER BY (defuse_asset_id, price_updated_at);
 
-CREATE TABLE IF NOT EXISTS events
-    (
-        block_height                     UInt64 COMMENT 'The height of the block',
-        block_timestamp                  DateTime64(9, 'UTC') COMMENT 'The timestamp of the block in UTC',
-        block_hash                       String COMMENT 'The hash of the block',
-        contract_id                      String COMMENT 'The ID of the account on which the execution outcome happens',
-        execution_status                 String COMMENT 'The execution outcome status',
-        version                        	 String COMMENT 'The event version',
-        standard                         String COMMENT 'The event standard',
-        event                        	 String COMMENT 'The event type',
-        data                         	 String COMMENT 'The event JSON data',
-        related_receipt_id               String COMMENT 'The execution outcome receipt ID',
-        related_receipt_receiver_id      String COMMENT 'The destination account ID',
-        related_receipt_predecessor_id   String COMMENT 'The account ID which issued a receipt. In case of a gas or deposit refund, the account ID is system',
+CREATE MATERIALIZED VIEW mv_defuse_assets
+REFRESH EVERY 1 DAY APPEND TO defuse_assets AS (
+    WITH json_rows AS (
+        SELECT
+        arrayJoin(items) item
+        FROM url('https://api-mng-console.chaindefuser.com/api/tokens/', JSONEachRow)
+    )
 
-        INDEX            block_timestamp_minmax_idx block_timestamp TYPE minmax GRANULARITY 1,
-        INDEX            contract_id_bloom_index contract_id TYPE bloom_filter() GRANULARITY 1,
-        INDEX            related_receipt_id_bloom_index related_receipt_id TYPE bloom_filter() GRANULARITY 1,
-        INDEX            related_receipt_receiver_id_bloom_index related_receipt_receiver_id TYPE bloom_filter() GRANULARITY 1,
-    ) ENGINE = ReplacingMergeTree
-    PRIMARY KEY (block_height, related_receipt_id)
-    ORDER BY (block_height, related_receipt_id);
+    SELECT
+        item.blockchain blockchain
+        , item.contract_address contract_address
+        , item.decimals decimals
+        , item.defuse_asset_id defuse_asset_id
+        , item.price price
+        , item.price_updated_at price_updated_at
+        , item.symbol symbol
+    FROM json_rows
+);
 
-CREATE TABLE IF NOT EXISTS silver_nep_245_events
-    (
-        block_height                     UInt64 COMMENT 'The height of the block',
-        block_timestamp                  DateTime64(9, 'UTC') COMMENT 'The timestamp of the block in UTC',
-        block_hash                       String COMMENT 'The hash of the block',
-        contract_id                      String COMMENT 'The ID of the account on which the execution outcome happens',
-        execution_status                 String COMMENT 'The execution outcome status',
-        version                        	 String COMMENT 'The event version',
-        standard                         String COMMENT 'The event standard',
-        event                        	 String COMMENT 'The event type',
-        related_receipt_id               String COMMENT 'The execution outcome receipt ID',
-        related_receipt_receiver_id      String COMMENT 'The destination account ID',
-        related_receipt_predecessor_id   String COMMENT 'The account ID which issued a receipt. In case of a gas or deposit refund, the account ID is system',
-        memo                             Nullable(String) COMMENT 'The event memo',
-        old_owner_id                     Nullable(String) COMMENT 'The old owner account ID',
-        new_owner_id                     Nullable(String) COMMENT 'The new owner account ID',
-        token_id                         Nullable(String) COMMENT 'The token ID',
-        amount                           Nullable(Float64) COMMENT 'The amount',
-
-        INDEX            nep_245_block_timestamp_minmax_idx block_timestamp TYPE minmax GRANULARITY 1,
-        INDEX            nep_245_contract_id_bloom_index contract_id TYPE bloom_filter() GRANULARITY 1,
-        INDEX            nep_245_related_receipt_id_bloom_index related_receipt_id TYPE bloom_filter() GRANULARITY 1,
-        INDEX            nep_245_related_receipt_receiver_id_bloom_index related_receipt_receiver_id TYPE bloom_filter() GRANULARITY 1,
-    ) ENGINE = ReplacingMergeTree
-    PRIMARY KEY (block_height, related_receipt_id, event, old_owner_id, new_owner_id)
-    ORDER BY (block_height, related_receipt_id, event, old_owner_id, new_owner_id)
-settings allow_nullable_key=true;
-
-CREATE MATERIALIZED VIEW mv_silver_nep_245_events TO silver_nep_245_events AS
+CREATE TABLE events (
+    block_height                UInt64 COMMENT 'The height of the block',
+    block_timestamp             DateTime64(9, 'UTC') COMMENT 'The timestamp of the block in UTC',
+    block_hash                  String COMMENT 'The hash of the block',
+    contract_id                 String COMMENT 'The ID of the account on which the execution outcome happens',
+    execution_status            String COMMENT 'The execution outcome status',
+    version                     String COMMENT 'The event version',
+    standard                    String COMMENT 'The event standard',
+    index_in_log                UInt64 COMMENT 'The index in the event log',
+    event                       String COMMENT 'The event type',
+    data                        String COMMENT 'The event JSON data',
+    related_receipt_id          String COMMENT 'The execution outcome receipt ID',
+    related_receipt_receiver_id String COMMENT 'The destination account ID',
+    related_receipt_predecessor_id String COMMENT 'The account ID which issued a receipt. In case of a gas or deposit refund, the account ID is system',
+    tx_hash                     Nullable(String) COMMENT 'The transaction hash',
+    receipt_index_in_block      UInt64 COMMENT 'Index of the receipt within the block',
+    INDEX block_timestamp_minmax_idx block_timestamp TYPE minmax GRANULARITY 1,
+    INDEX contract_id_bloom_index contract_id TYPE bloom_filter() GRANULARITY 1,
+    INDEX related_receipt_id_bloom_index related_receipt_id TYPE bloom_filter() GRANULARITY 1,
+    INDEX related_receipt_receiver_id_bloom_index related_receipt_receiver_id TYPE bloom_filter() GRANULARITY 1
+) ENGINE = ReplacingMergeTree
+PRIMARY KEY (block_height, related_receipt_id, index_in_log)
+ORDER BY (block_height, related_receipt_id, index_in_log)
+SETTINGS index_granularity = 8192;
+CREATE TABLE silver_nep_245_events (
+    block_height                UInt64 COMMENT 'The height of the block',
+    block_timestamp             DateTime64(9, 'UTC') COMMENT 'The timestamp of the block in UTC',
+    block_hash                  String COMMENT 'The hash of the block',
+    tx_hash                     String COMMENT 'The hash of transaction',
+    contract_id                 String COMMENT 'The ID of the account on which the execution outcome happens',
+    execution_status            String COMMENT 'The execution outcome status',
+    version                     String COMMENT 'The event version',
+    standard                    String COMMENT 'The event standard',
+    event                       String COMMENT 'The event type',
+    related_receipt_id          String COMMENT 'The execution outcome receipt ID',
+    related_receipt_receiver_id String COMMENT 'The destination account ID',
+    related_receipt_predecessor_id String COMMENT 'The account ID which issued a receipt. In case of a gas or deposit refund, the account ID is system',
+    memo                        Nullable(String) COMMENT 'The event memo',
+    old_owner_id                Nullable(String) COMMENT 'The old owner account ID',
+    new_owner_id                Nullable(String) COMMENT 'The new owner account ID',
+    token_id                    Nullable(String) COMMENT 'The token ID',
+    amount                      Nullable(Float64) COMMENT 'The amount',
+    INDEX nep_245_block_timestamp_minmax_idx block_timestamp TYPE minmax GRANULARITY 1,
+    INDEX nep_245_contract_id_bloom_index contract_id TYPE bloom_filter() GRANULARITY 1,
+    INDEX nep_245_related_receipt_id_bloom_index related_receipt_id TYPE bloom_filter() GRANULARITY 1,
+    INDEX nep_245_related_receipt_receiver_id_bloom_index related_receipt_receiver_id TYPE bloom_filter() GRANULARITY 1
+) ENGINE = ReplacingMergeTree
+PRIMARY KEY (block_height, related_receipt_id, event, old_owner_id, new_owner_id, token_id)
+ORDER BY (block_height, related_receipt_id, event, old_owner_id, new_owner_id, token_id)
+SETTINGS allow_nullable_key = true, index_granularity = 8192;
+CREATE MATERIALIZED VIEW mv_silver_nep_245_events TO silver_nep_245_events (
+    block_height                UInt64,
+    block_timestamp             DateTime64(9, 'UTC'),
+    block_hash                  String,
+    tx_hash                     String,
+    contract_id                 String,
+    execution_status            String,
+    version                     String,
+    standard                    String,
+    event                       String,
+    related_receipt_id          String,
+    related_receipt_receiver_id String,
+    related_receipt_predecessor_id String,
+    memo                        String,
+    old_owner_id                Nullable(String),
+    new_owner_id                Nullable(String),
+    token_id                    String,
+    amount                      Float64
+) AS
 WITH decoded_events AS (
-    SELECT *
-        , arrayJoin(JSONExtractArrayRaw(data)) data_row
+    SELECT *, arrayJoin(JSONExtractArrayRaw(data)) AS data_row
     FROM events
-    WHERE standard = 'nep245'
-    -- timestamp threshold for new records
-    -- previous records backfill can be done via https://clickhouse.com/docs/en/data-modeling/backfilling#timestamp-or-monotonically-increasing-column-available 
-    AND block_timestamp >= '2025-02-12 22:10:00'
+    WHERE (standard = 'nep245') AND (block_timestamp >= '2025-02-12 22:10:00')
 ), tokens AS (
-    SELECT * 
-        , COALESCE(JSON_VALUE(data_row, '$.memo'), '') memo
-        , if( event = 'mt_transfer', JSON_VALUE(data_row, '$.old_owner_id'), JSON_VALUE(data_row, '$.owner_id')) old_owner_id
-        , if( event = 'mt_transfer', JSON_VALUE(data_row, '$.new_owner_id'), JSON_VALUE(data_row, '$.owner_id')) new_owner_id
-        , JSONExtractArrayRaw(data_row, 'token_ids') token_ids
-        , JSONExtractArrayRaw(data_row, 'amounts') amounts
+    SELECT *, coalesce(JSON_VALUE(data_row, '$.memo'), '') AS memo,
+           if(event = 'mt_transfer', JSON_VALUE(data_row, '$.old_owner_id'), JSON_VALUE(data_row, '$.owner_id')) AS old_owner_id,
+           if(event = 'mt_transfer', JSON_VALUE(data_row, '$.new_owner_id'), JSON_VALUE(data_row, '$.owner_id')) AS new_owner_id,
+           JSONExtractArrayRaw(data_row, 'token_ids') AS token_ids,
+           JSONExtractArrayRaw(data_row, 'amounts') AS amounts
     FROM decoded_events
 ), tokens_flattened AS (
-    SELECT *
-        , (arrayJoin(arrayZip(token_ids, amounts)) AS t).1 token_id, t.2 as amount
+    SELECT *, (arrayJoin(arrayZip(token_ids, amounts)) AS t).1 AS token_id, t.2 AS amount
     FROM tokens
 )
-SELECT 
-    block_height
-    , block_timestamp
-    , block_hash
-    , contract_id
-    , execution_status
-    , version
-    , standard
-    , event
-    , related_receipt_id
-    , related_receipt_receiver_id
-    , related_receipt_predecessor_id
-    , memo
-    , old_owner_id
-    , new_owner_id
-    , replaceAll(token_id, '"', '')  token_id 
-    , replaceAll(amount, '"', '')::Float64 amount 
+SELECT block_height, block_timestamp, block_hash, tx_hash, contract_id, execution_status, version, standard, event, related_receipt_id, related_receipt_receiver_id, related_receipt_predecessor_id, memo, old_owner_id, new_owner_id, replaceAll(token_id, '"', '') AS token_id, CAST(replaceAll(amount, '"', ''), 'Float64') AS amount
 FROM tokens_flattened
-settings function_json_value_return_type_allow_nullable=true;
+SETTINGS function_json_value_return_type_allow_nullable = true;
 
-CREATE TABLE IF NOT EXISTS silver_dip4_token_diff
-    (
-        block_height                     UInt64 COMMENT 'The height of the block',
-        block_timestamp                  DateTime64(9, 'UTC') COMMENT 'The timestamp of the block in UTC',
-        block_hash                       String COMMENT 'The hash of the block',
-        contract_id                      String COMMENT 'The ID of the account on which the execution outcome happens',
-        execution_status                 String COMMENT 'The execution outcome status',
-        version                        	 String COMMENT 'The event version',
-        standard                         String COMMENT 'The event standard',
-        event                        	 String COMMENT 'The event type',
-        related_receipt_id               String COMMENT 'The execution outcome receipt ID',
-        related_receipt_receiver_id      String COMMENT 'The destination account ID',
-        related_receipt_predecessor_id   String COMMENT 'The account ID which issued a receipt. In case of a gas or deposit refund, the account ID is system',
-        account_id                       String COMMENT 'The token differential account ID',
-        diff_positive_token              String COMMENT 'The positive token differential',
-        diff_positive_amount             Float64 COMMENT 'The positive amount differential',
-        diff_negative_token              String COMMENT 'The negative token differential',
-        diff_negative_amount             Float64 COMMENT 'The negative amount differential',
-        intent_hash                      String COMMENT 'The hash of the intent',
-        referral                         Nullable(String) COMMENT 'The referral of the intent',
-
-        INDEX            dif4_diff_block_timestamp_minmax_idx block_timestamp TYPE minmax GRANULARITY 1,
-        INDEX            dif4_diff_contract_id_bloom_index contract_id TYPE bloom_filter() GRANULARITY 1,
-        INDEX            dif4_diff_related_receipt_id_bloom_index related_receipt_id TYPE bloom_filter() GRANULARITY 1,
-        INDEX            dif4_diff_related_receipt_receiver_id_bloom_index related_receipt_receiver_id TYPE bloom_filter() GRANULARITY 1,
-    ) ENGINE = ReplacingMergeTree
-    PRIMARY KEY (block_height, related_receipt_id, intent_hash)
-    ORDER BY (block_height, related_receipt_id, intent_hash);
-
-CREATE MATERIALIZED VIEW mv_silver_dip4_token_diff TO silver_dip4_token_diff AS
-    WITH decoded_events AS (
-        SELECT *
-            , arrayJoin(JSONExtractArrayRaw(data)) data_row
-        FROM events
-        WHERE contract_id in ('defuse-alpha.near', 'intents.near')
-        AND standard = 'dip4' 
-        AND event = 'token_diff'
-        -- timestamp threshold for new records
-        -- previous records backfill can be done via https://clickhouse.com/docs/en/data-modeling/backfilling#timestamp-or-monotonically-increasing-column-available 
-        AND block_timestamp >= '2025-02-12 22:55:00'
-    ),
-    parsed_json AS (
-        SELECT *
-            , COALESCE(JSON_VALUE(data_row, '$.account_id'), '') account_id
-            , COALESCE(JSON_VALUE(data_row, '$.diff'), '') diff
-            , COALESCE(JSON_VALUE(data_row, '$.intent_hash'), '') intent_hash
-            , COALESCE(JSON_VALUE(data_row, '$.referral'), '') referral
-        FROM decoded_events
-   ),
-    diff_kvs AS (
-        SELECT
-            diff
-            , arrayJoin(JSONExtractKeysAndValues(assumeNotNull(diff), 'Float64')) diff_kv
-            , *
-        FROM parsed_json
-    )
-    SELECT 
-        block_height
-        , block_timestamp
-        , block_hash
-        , contract_id
-        , execution_status
-        , version
-        , standard
-        , event
-        , related_receipt_id
-        , related_receipt_predecessor_id
-        , related_receipt_receiver_id
-        , account_id
-        , IF (diff_kv.2 >= 0, diff_kv.1, '')  diff_positive_token
-        , IF (diff_kv.2 >= 0, diff_kv.2, 0)  diff_positive_amount
-        , IF (diff_kv.2 < 0, diff_kv.1, '')  diff_negative_token
-        , IF (diff_kv.2 < 0, diff_kv.2, 0)  diff_negative_amount
-        , intent_hash
-        , referral
-        
-    FROM diff_kvs
-    settings function_json_value_return_type_allow_nullable=true, function_json_value_return_type_allow_complex=true;
-
-
-CREATE TABLE IF NOT EXISTS silver_dip4_public_keys
-    (
-        block_height                     UInt64 COMMENT 'The height of the block',
-        block_timestamp                  DateTime64(9, 'UTC') COMMENT 'The timestamp of the block in UTC',
-        block_hash                       String COMMENT 'The hash of the block',
-        contract_id                      String COMMENT 'The ID of the account on which the execution outcome happens',
-        execution_status                 String COMMENT 'The execution outcome status',
-        version                        	 String COMMENT 'The event version',
-        standard                         String COMMENT 'The event standard',
-        event                        	 String COMMENT 'The event type',
-        related_receipt_id               String COMMENT 'The execution outcome receipt ID',
-        related_receipt_receiver_id      String COMMENT 'The destination account ID',
-        related_receipt_predecessor_id   String COMMENT 'The account ID which issued a receipt. In case of a gas or deposit refund, the account ID is system',
-        account_id                       String COMMENT 'The public key account ID',
-        public_key                       String COMMENT 'The public key',
-
-        INDEX            dip4_public_keys_block_timestamp_minmax_idx block_timestamp TYPE minmax GRANULARITY 1,
-        INDEX            dip4_public_keys_contract_id_bloom_index contract_id TYPE bloom_filter() GRANULARITY 1,
-        INDEX            dip4_public_keys_related_receipt_id_bloom_index related_receipt_id TYPE bloom_filter() GRANULARITY 1,
-        INDEX            dip4_public_keys_related_receipt_receiver_id_bloom_index related_receipt_receiver_id TYPE bloom_filter() GRANULARITY 1,
-    ) ENGINE = ReplacingMergeTree
-    PRIMARY KEY (block_height, related_receipt_id, account_id)
-    ORDER BY (block_height, related_receipt_id, account_id);
-
-CREATE MATERIALIZED VIEW mv_silver_dip4_public_keys TO silver_dip4_public_keys AS
+CREATE TABLE silver_dip4_token_diff (
+    block_height                UInt64 COMMENT 'The height of the block',
+    block_timestamp             DateTime64(9, 'UTC') COMMENT 'The timestamp of the block in UTC',
+    block_hash                  String COMMENT 'The hash of the block',
+    contract_id                 String COMMENT 'The ID of the account on which the execution outcome happens',
+    execution_status            String COMMENT 'The execution outcome status',
+    version                     String COMMENT 'The event version',
+    standard                    String COMMENT 'The event standard',
+    event                       String COMMENT 'The event type',
+    related_receipt_id          String COMMENT 'The execution outcome receipt ID',
+    related_receipt_receiver_id String COMMENT 'The destination account ID',
+    related_receipt_predecessor_id String COMMENT 'The account ID which issued a receipt. In case of a gas or deposit refund, the account ID is system',
+    account_id                  String COMMENT 'The token differential account ID',
+    diff_positive_token         String COMMENT 'The positive token differential',
+    diff_positive_amount        Float64 COMMENT 'The positive amount differential',
+    diff_negative_token         String COMMENT 'The negative token differential',
+    diff_negative_amount        Float64 COMMENT 'The negative amount differential',
+    intent_hash                 String COMMENT 'The hash of the intent',
+    referral                    Nullable(String) COMMENT 'The referral of the intent',
+    INDEX dif4_diff_block_timestamp_minmax_idx block_timestamp TYPE minmax GRANULARITY 1,
+    INDEX dif4_diff_contract_id_bloom_index contract_id TYPE bloom_filter() GRANULARITY 1,
+    INDEX dif4_diff_related_receipt_id_bloom_index related_receipt_id TYPE bloom_filter() GRANULARITY 1,
+    INDEX dif4_diff_related_receipt_receiver_id_bloom_index related_receipt_receiver_id TYPE bloom_filter() GRANULARITY 1
+) ENGINE = ReplacingMergeTree
+PRIMARY KEY (block_height, related_receipt_id, intent_hash)
+ORDER BY (block_height, related_receipt_id, intent_hash)
+SETTINGS index_granularity = 8192;
+CREATE MATERIALIZED VIEW mv_silver_dip4_token_diff TO silver_dip4_token_diff (
+    block_height                UInt64,
+    block_timestamp             DateTime64(9, 'UTC'),
+    block_hash                  String,
+    contract_id                 String,
+    execution_status            String,
+    version                     String,
+    standard                    String,
+    event                       String,
+    related_receipt_id          String,
+    related_receipt_predecessor_id String,
+    related_receipt_receiver_id String,
+    account_id                  String,
+    diff_positive_token         String,
+    diff_positive_amount        Float64,
+    diff_negative_token         String,
+    diff_negative_amount        Float64,
+    intent_hash                 String,
+    referral                    String
+) AS
 WITH decoded_events AS (
-    SELECT
-        *
-        , data data_row
+    SELECT *, arrayJoin(JSONExtractArrayRaw(data)) AS data_row
     FROM events
-    WHERE contract_id in ('defuse-alpha.near', 'intents.near')
-    AND standard = 'dip4' 
-    AND event in ('public_key_added', 'public_key_removed')
-    -- timestamp threshold for new records
-    -- previous records backfill can be done via https://clickhouse.com/docs/en/data-modeling/backfilling#timestamp-or-monotonically-increasing-column-available 
-    AND block_timestamp >= '2025-02-12 23:35:00'
+    WHERE (contract_id IN ('defuse-alpha.near', 'intents.near')) AND (standard = 'dip4') AND (event = 'token_diff') AND (block_timestamp >= '2025-02-18 22:55:00')
+), parsed_json AS (
+    SELECT *, coalesce(JSON_VALUE(data_row, '$.account_id'), '') AS account_id,
+           coalesce(JSON_VALUE(data_row, '$.diff'), '') AS diff,
+           coalesce(JSON_VALUE(data_row, '$.intent_hash'), '') AS intent_hash,
+           coalesce(JSON_VALUE(data_row, '$.referral'), '') AS referral
+    FROM decoded_events
+), diff_kvs AS (
+    SELECT diff, arrayJoin(JSONExtractKeysAndValues(assumeNotNull(diff), 'Float64')) AS diff_kv, *
+    FROM parsed_json
 )
+SELECT block_height, block_timestamp, block_hash, contract_id, execution_status, version, standard, event, related_receipt_id, related_receipt_predecessor_id, related_receipt_receiver_id, account_id,
+       if((diff_kv.2) >= 0, diff_kv.1, '') AS diff_positive_token,
+       if((diff_kv.2) >= 0, diff_kv.2, 0) AS diff_positive_amount,
+       if((diff_kv.2) < 0, diff_kv.1, '') AS diff_negative_token,
+       if((diff_kv.2) < 0, diff_kv.2, 0) AS diff_negative_amount,
+       intent_hash, referral
+FROM diff_kvs
+SETTINGS function_json_value_return_type_allow_nullable = true, function_json_value_return_type_allow_complex = true;
 
-SELECT
-    block_height
-    , block_timestamp
-    , block_hash
-    , contract_id
-    , execution_status
-    , version
-    , standard
-    , event
-    , related_receipt_id
-    , related_receipt_predecessor_id
-    , related_receipt_receiver_id
-    , COALESCE(JSON_VALUE(data_row, '$.account_id'), '') account_id
-    , COALESCE(JSON_VALUE(data_row, '$.public_key'), '') public_key
+
+CREATE TABLE silver_dip4_public_keys (
+    block_height                UInt64 COMMENT 'The height of the block',
+    block_timestamp             DateTime64(9, 'UTC') COMMENT 'The timestamp of the block in UTC',
+    block_hash                  String COMMENT 'The hash of the block',
+    contract_id                 String COMMENT 'The ID of the account on which the execution outcome happens',
+    execution_status            String COMMENT 'The execution outcome status',
+    version                     String COMMENT 'The event version',
+    standard                    String COMMENT 'The event standard',
+    event                       String COMMENT 'The event type',
+    related_receipt_id          String COMMENT 'The execution outcome receipt ID',
+    related_receipt_receiver_id String COMMENT 'The destination account ID',
+    related_receipt_predecessor_id String COMMENT 'The account ID which issued a receipt. In case of a gas or deposit refund, the account ID is system',
+    account_id                  String COMMENT 'The public key account ID',
+    public_key                  String COMMENT 'The public key',
+    INDEX dip4_public_keys_block_timestamp_minmax_idx block_timestamp TYPE minmax GRANULARITY 1,
+    INDEX dip4_public_keys_contract_id_bloom_index contract_id TYPE bloom_filter() GRANULARITY 1,
+    INDEX dip4_public_keys_related_receipt_id_bloom_index related_receipt_id TYPE bloom_filter() GRANULARITY 1,
+    INDEX dip4_public_keys_related_receipt_receiver_id_bloom_index related_receipt_receiver_id TYPE bloom_filter() GRANULARITY 1
+) ENGINE = ReplacingMergeTree
+PRIMARY KEY (block_height, related_receipt_id, account_id)
+ORDER BY (block_height, related_receipt_id, account_id)
+SETTINGS index_granularity = 8192;
+CREATE MATERIALIZED VIEW mv_silver_dip4_public_keys TO silver_dip4_public_keys (
+    block_height                UInt64,
+    block_timestamp             DateTime64(9, 'UTC'),
+    block_hash                  String,
+    contract_id                 String,
+    execution_status            String,
+    version                     String,
+    standard                    String,
+    event                       String,
+    related_receipt_id          String,
+    related_receipt_predecessor_id String,
+    related_receipt_receiver_id String,
+    account_id                  String,
+    public_key                  String
+) AS
+WITH decoded_events AS (
+    SELECT *, data AS data_row
+    FROM events
+    WHERE (contract_id IN ('defuse-alpha.near', 'intents.near')) AND (standard = 'dip4') AND (event IN ('public_key_added', 'public_key_removed')) AND (block_timestamp >= '2025-02-12 23:35:00')
+)
+SELECT block_height, block_timestamp, block_hash, contract_id, execution_status, version, standard, event, related_receipt_id, related_receipt_predecessor_id, related_receipt_receiver_id, coalesce(JSON_VALUE(data_row, '$.account_id'), '') AS account_id, coalesce(JSON_VALUE(data_row, '$.public_key'), '') AS public_key
 FROM decoded_events
-settings function_json_value_return_type_allow_nullable=true, function_json_value_return_type_allow_complex=true;
-
-CREATE TABLE IF NOT EXISTS silver_dip4_intents_executed
-    (
-        block_height                     UInt64 COMMENT 'The height of the block',
-        block_timestamp                  DateTime64(9, 'UTC') COMMENT 'The timestamp of the block in UTC',
-        block_hash                       String COMMENT 'The hash of the block',
-        contract_id                      String COMMENT 'The ID of the account on which the execution outcome happens',
-        execution_status                 String COMMENT 'The execution outcome status',
-        version                        	 String COMMENT 'The event version',
-        standard                         String COMMENT 'The event standard',
-        event                        	 String COMMENT 'The event type',
-        related_receipt_id               String COMMENT 'The execution outcome receipt ID',
-        related_receipt_receiver_id      String COMMENT 'The destination account ID',
-        related_receipt_predecessor_id   String COMMENT 'The account ID which issued a receipt. In case of a gas or deposit refund, the account ID is system',
-        account_id                       String COMMENT 'The intent executed account ID',
-        intent_hash                      String COMMENT 'The intent executed hash',
-
-        INDEX            dip4_intents_executed_block_timestamp_minmax_idx block_timestamp TYPE minmax GRANULARITY 1,
-        INDEX            dip4_intents_executed_contract_id_bloom_index contract_id TYPE bloom_filter() GRANULARITY 1,
-        INDEX            dip4_intents_executed_related_receipt_id_bloom_index related_receipt_id TYPE bloom_filter() GRANULARITY 1,
-        INDEX            dip4_intents_executed_related_receipt_receiver_id_bloom_index related_receipt_receiver_id TYPE bloom_filter() GRANULARITY 1,
-    ) ENGINE = ReplacingMergeTree
-    PRIMARY KEY (block_height, related_receipt_id, intent_hash)
-    ORDER BY (block_height, related_receipt_id, intent_hash);
-
-CREATE MATERIALIZED VIEW mv_silver_dip4_intents_executed TO silver_dip4_intents_executed AS
-    WITH decoded_events AS (
-        SELECT *
-            , arrayJoin(JSONExtractArrayRaw(data)) data_row
-        FROM events
-        WHERE contract_id in ('defuse-alpha.near', 'intents.near')
-        AND standard = 'dip4' and event = 'intents_executed'
-        -- timestamp threshold for new records
-        -- previous records backfill can be done via https://clickhouse.com/docs/en/data-modeling/backfilling#timestamp-or-monotonically-increasing-column-available 
-        AND block_timestamp >= '2025-02-12 23:45:00'
-    )
-
-    SELECT
-        block_height
-        , block_timestamp
-        , block_hash
-        , contract_id
-        , execution_status
-        , version
-        , standard
-        , event
-        , related_receipt_id
-        , related_receipt_predecessor_id
-        , related_receipt_receiver_id
-        , COALESCE(JSON_VALUE(data_row, '$.account_id'), '') account_id
-        , COALESCE(JSON_VALUE(data_row, '$.intent_hash'), '') intent_hash
-    FROM decoded_events
-    settings function_json_value_return_type_allow_nullable=true, function_json_value_return_type_allow_complex=true;
+SETTINGS function_json_value_return_type_allow_nullable = true, function_json_value_return_type_allow_complex = true;
+CREATE TABLE silver_dip4_intents_executed (
+    block_height                UInt64 COMMENT 'The height of the block',
+    block_timestamp             DateTime64(9, 'UTC') COMMENT 'The timestamp of the block in UTC',
+    block_hash                  String COMMENT 'The hash of the block',
+    contract_id                 String COMMENT 'The ID of the account on which the execution outcome happens',
+    execution_status            String COMMENT 'The execution outcome status',
+    version                     String COMMENT 'The event version',
+    standard                    String COMMENT 'The event standard',
+    event                       String COMMENT 'The event type',
+    related_receipt_id          String COMMENT 'The execution outcome receipt ID',
+    related_receipt_receiver_id String COMMENT 'The destination account ID',
+    related_receipt_predecessor_id String COMMENT 'The account ID which issued a receipt. In case of a gas or deposit refund, the account ID is system',
+    account_id                  String COMMENT 'The intent executed account ID',
+    intent_hash                 String COMMENT 'The intent executed hash',
+    INDEX dip4_intents_executed_block_timestamp_minmax_idx block_timestamp TYPE minmax GRANULARITY 1,
+    INDEX dip4_intents_executed_contract_id_bloom_index contract_id TYPE bloom_filter() GRANULARITY 1,
+    INDEX dip4_intents_executed_related_receipt_id_bloom_index related_receipt_id TYPE bloom_filter() GRANULARITY 1,
+    INDEX dip4_intents_executed_related_receipt_receiver_id_bloom_index related_receipt_receiver_id TYPE bloom_filter() GRANULARITY 1
+) ENGINE = ReplacingMergeTree
+PRIMARY KEY (block_height, related_receipt_id, intent_hash)
+ORDER BY (block_height, related_receipt_id, intent_hash)
+SETTINGS index_granularity = 8192;
+CREATE MATERIALIZED VIEW mv_silver_dip4_intents_executed TO silver_dip4_intents_executed (
+    block_height                UInt64,
+    block_timestamp             DateTime64(9, 'UTC'),
+    block_hash                  String,
+    contract_id                 String,
+    execution_status            String,
+    version                     String,
+    standard                    String,
+    event                       String,
+    related_receipt_id          String,
+    related_receipt_predecessor_id String,
+    related_receipt_receiver_id String,
+    account_id                  String,
+    intent_hash                 String
+) AS
+WITH decoded_events AS (
+    SELECT *, arrayJoin(JSONExtractArrayRaw(data)) AS data_row
+    FROM events
+    WHERE (contract_id IN ('defuse-alpha.near', 'intents.near')) AND (standard = 'dip4') AND (event = 'intents_executed') AND (block_timestamp >= '2025-02-12 23:45:00')
+)
+SELECT block_height, block_timestamp, block_hash, contract_id, execution_status, version, standard, event, related_receipt_id, related_receipt_predecessor_id, related_receipt_receiver_id, coalesce(JSON_VALUE(data_row, '$.account_id'), '') AS account_id, coalesce(JSON_VALUE(data_row, '$.intent_hash'), '') AS intent_hash
+FROM decoded_events
+SETTINGS function_json_value_return_type_allow_nullable = true, function_json_value_return_type_allow_complex = true;
 
 
-CREATE TABLE IF NOT EXISTS silver_dip4_fee_changed
-    (
-        block_height                     UInt64 COMMENT 'The height of the block',
-        block_timestamp                  DateTime64(9, 'UTC') COMMENT 'The timestamp of the block in UTC',
-        block_hash                       String COMMENT 'The hash of the block',
-        contract_id                      String COMMENT 'The ID of the account on which the execution outcome happens',
-        execution_status                 String COMMENT 'The execution outcome status',
-        version                        	 String COMMENT 'The event version',
-        standard                         String COMMENT 'The event standard',
-        event                        	 String COMMENT 'The event type',
-        related_receipt_id               String COMMENT 'The execution outcome receipt ID',
-        related_receipt_receiver_id      String COMMENT 'The destination account ID',
-        related_receipt_predecessor_id   String COMMENT 'The account ID which issued a receipt. In case of a gas or deposit refund, the account ID is system',
-        old_fee                          String COMMENT 'The old fee',
-        new_fee                          String COMMENT 'The new fee',
+CREATE TABLE silver_dip4_fee_changed (
+    block_height                UInt64 COMMENT 'The height of the block',
+    block_timestamp             DateTime64(9, 'UTC') COMMENT 'The timestamp of the block in UTC',
+    block_hash                  String COMMENT 'The hash of the block',
+    contract_id                 String COMMENT 'The ID of the account on which the execution outcome happens',
+    execution_status            String COMMENT 'The execution outcome status',
+    version                     String COMMENT 'The event version',
+    standard                    String COMMENT 'The event standard',
+    event                       String COMMENT 'The event type',
+    related_receipt_id          String COMMENT 'The execution outcome receipt ID',
+    related_receipt_receiver_id String COMMENT 'The destination account ID',
+    related_receipt_predecessor_id String COMMENT 'The account ID which issued a receipt. In case of a gas or deposit refund, the account ID is system',
+    old_fee                     String COMMENT 'The old fee',
+    new_fee                     String COMMENT 'The new fee',
+    INDEX dip4_fee_changed_block_timestamp_minmax_idx block_timestamp TYPE minmax GRANULARITY 1,
+    INDEX dip4_fee_changed_contract_id_bloom_index contract_id TYPE bloom_filter() GRANULARITY 1,
+    INDEX dip4_fee_changed_related_receipt_id_bloom_index related_receipt_id TYPE bloom_filter() GRANULARITY 1,
+    INDEX dip4_fee_changed_related_receipt_receiver_id_bloom_index related_receipt_receiver_id TYPE bloom_filter() GRANULARITY 1
+) ENGINE = ReplacingMergeTree
+PRIMARY KEY (block_height, related_receipt_id)
+ORDER BY (block_height, related_receipt_id)
+SETTINGS index_granularity = 8192;
+CREATE MATERIALIZED VIEW silver_mv_dip4_fee_changed TO silver_dip4_fee_changed (
+    block_height                UInt64,
+    block_timestamp             DateTime64(9, 'UTC'),
+    block_hash                  String,
+    contract_id                 String,
+    execution_status            String,
+    version                     String,
+    standard                    String,
+    event                       String,
+    related_receipt_id          String,
+    related_receipt_predecessor_id String,
+    related_receipt_receiver_id String,
+    old_fee                     String,
+    new_fee                     String
+) AS
+WITH decoded_events AS (
+    SELECT *, data AS data_row
+    FROM events
+    WHERE (contract_id IN ('defuse-alpha.near', 'intents.near')) AND (standard = 'dip4') AND (event = 'fee_changed') AND (block_timestamp >= '2025-02-12 23:50:00')
+)
+SELECT block_height, block_timestamp, block_hash, contract_id, execution_status, version, standard, event, related_receipt_id, related_receipt_predecessor_id, related_receipt_receiver_id, coalesce(JSON_VALUE(data_row, '$.old_fee'), '') AS old_fee, coalesce(JSON_VALUE(data_row, '$.new_fee'), '') AS new_fee
+FROM decoded_events
+SETTINGS function_json_value_return_type_allow_nullable = true, function_json_value_return_type_allow_complex = true;
 
-        INDEX            dip4_fee_changed_block_timestamp_minmax_idx block_timestamp TYPE minmax GRANULARITY 1,
-        INDEX            dip4_fee_changed_contract_id_bloom_index contract_id TYPE bloom_filter() GRANULARITY 1,
-        INDEX            dip4_fee_changed_related_receipt_id_bloom_index related_receipt_id TYPE bloom_filter() GRANULARITY 1,
-        INDEX            dip4_fee_changed_related_receipt_receiver_id_bloom_index related_receipt_receiver_id TYPE bloom_filter() GRANULARITY 1,
-    ) ENGINE = ReplacingMergeTree
-    PRIMARY KEY (block_height, related_receipt_id)
-    ORDER BY (block_height, related_receipt_id);
+CREATE VIEW gold_view_intents_metrics (
+    day Date,
+    symbol String,
+    referral String,
+    blockchain String,
+    transfer_volume Nullable(Float64),
+    deposits Nullable(Float64),
+    withdraws Nullable(Float64),
+    netflow Nullable(Float64)
+) AS
+WITH decoded AS (
+    SELECT DISTINCT e.block_timestamp, e.block_hash, e.event, e.memo, e.old_owner_id, e.new_owner_id, e.token_id,
+           (e.amount / pow(10, a.decimals)) * a.price AS usd_value,
+           a.symbol, a.blockchain, d.referral
+    FROM silver_nep_245_events AS e
+    LEFT JOIN silver_dip4_token_diff AS d ON d.related_receipt_id = e.related_receipt_id
+    LEFT JOIN defuse_assets AS a ON (CAST(e.block_timestamp, 'date') = CAST(a.price_updated_at, 'date')) AND (e.token_id = a.defuse_asset_id)
+    WHERE NOT ((length(referral) = 0) AND (length(memo) = 0))
+)
+SELECT CAST(e.block_timestamp, 'date') AS day, symbol, coalesce(referral, 'Others') AS referral, blockchain,
+       sum(multiIf(e.event = 'mt_transfer', usd_value, NULL)) AS transfer_volume,
+       sum(multiIf(e.event = 'mt_mint', usd_value, NULL)) AS deposits,
+       sum(multiIf(e.event = 'mt_burn', usd_value, NULL)) * -1 AS withdraws,
+       sum(multiIf(e.event = 'mt_mint', usd_value, e.event = 'mt_burn', usd_value * -1, NULL)) AS netflow
+FROM decoded
+WHERE (symbol != '') AND (blockchain != '')
+GROUP BY ALL
+ORDER BY 1 ASC;
 
-CREATE MATERIALIZED VIEW silver_mv_dip4_fee_changed TO silver_dip4_fee_changed AS
-    WITH decoded_events AS (
-        SELECT *
-            , data data_row
-        FROM events
-        WHERE contract_id in ('defuse-alpha.near', 'intents.near')
-        AND standard = 'dip4' and event = 'fee_changed'
-        -- timestamp threshold for new records
-        -- previous records backfill can be done via https://clickhouse.com/docs/en/data-modeling/backfilling#timestamp-or-monotonically-increasing-column-available 
-        AND block_timestamp >= '2025-02-12 23:50:00'
-    )
+CREATE TABLE transactions (
+    block_height         UInt64 COMMENT 'The height of the block',
+    block_timestamp      DateTime64(9, 'UTC') COMMENT 'The timestamp of the block in UTC',
+    block_hash           String COMMENT 'The hash of the block',
+    transaction_hash     String COMMENT 'The transaction hash',
+    signer_id            String COMMENT 'The signer account ID',
+    receiver_id          String COMMENT 'The receiver account ID',
+    actions              String COMMENT 'JSON array of actions',
+    INDEX block_timestamp_minmax_idx block_timestamp TYPE minmax GRANULARITY 1,
+    INDEX transaction_hash_bloom_idx transaction_hash TYPE bloom_filter() GRANULARITY 1,
+    INDEX signer_id_bloom_idx signer_id TYPE bloom_filter() GRANULARITY 1,
+    INDEX receiver_id_bloom_idx receiver_id TYPE bloom_filter() GRANULARITY 1
+) ENGINE = ReplacingMergeTree
+PRIMARY KEY (block_height, transaction_hash)
+ORDER BY (block_height, transaction_hash)
+SETTINGS index_granularity = 8192;
 
-    SELECT
-        block_height
-        , block_timestamp
-        , block_hash
-        , contract_id
-        , execution_status
-        , version
-        , standard
-        , event
-        , related_receipt_id
-        , related_receipt_predecessor_id
-        , related_receipt_receiver_id
-        , COALESCE(JSON_VALUE(data_row, '$.old_fee'), '') old_fee
-        , COALESCE(JSON_VALUE(data_row, '$.new_fee'), '') new_fee
-    FROM decoded_events
-    settings function_json_value_return_type_allow_nullable=true, function_json_value_return_type_allow_complex=true;
+CREATE TABLE receipts (
+    block_height              UInt64 COMMENT 'The height of the block',
+    block_timestamp           DateTime64(9, 'UTC') COMMENT 'The timestamp of the block in UTC',
+    block_hash                String COMMENT 'The hash of the block',
+    parent_transaction_hash   String COMMENT 'The parent transaction hash',
+    receipt_id                String COMMENT 'The receipt ID',
+    receiver_id               String COMMENT 'The receiver account ID',
+    predecessor_id            String COMMENT 'The predecessor account ID',
+    actions                   String COMMENT 'JSON array of actions',
+    INDEX block_timestamp_minmax_idx block_timestamp TYPE minmax GRANULARITY 1,
+    INDEX receipt_id_bloom_idx receipt_id TYPE bloom_filter() GRANULARITY 1,
+    INDEX receiver_id_bloom_idx receiver_id TYPE bloom_filter() GRANULARITY 1,
+    INDEX predecessor_id_bloom_idx predecessor_id TYPE bloom_filter() GRANULARITY 1,
+    INDEX parent_tx_hash_bloom_idx parent_transaction_hash TYPE bloom_filter() GRANULARITY 1
+) ENGINE = ReplacingMergeTree
+PRIMARY KEY (block_height, receipt_id)
+ORDER BY (block_height, receipt_id)
+SETTINGS index_granularity = 8192;
 
-CREATE VIEW gold_view_intents_metrics AS
-  with decoded as
-  (select distinct 
-    e.block_timestamp,
-    e.block_hash,
-    e.event,
-    e.memo,
-    e.old_owner_id,
-    e.new_owner_id,
-    e.token_id,
-    e.amount/pow(10,a.decimals) * a.price as usd_value, 
-    a.symbol, 
-    a.blockchain, 
-    d.referral
-  from silver_nep_245_events e
-      left join silver_dip4_token_diff d
-          on d.related_receipt_id = e.related_receipt_id
-      left join defuse_assets a
-          on e.block_timestamp::date = a.price_updated_at::date
-            and e.token_id = a.defuse_asset_id
-    where not(length(referral) = 0 and length(memo) = 0)
-    )
+CREATE TABLE execution_outcomes (
+    block_height              UInt64 COMMENT 'The height of the block',
+    block_timestamp           DateTime64(9, 'UTC') COMMENT 'The timestamp of the block in UTC',
+    block_hash                String COMMENT 'The hash of the block',
+    parent_transaction_hash   String COMMENT 'The parent transaction hash',
+    executor_id               String COMMENT 'The executor account ID',
+    receipt_ids               Array(String) COMMENT 'Array of receipt IDs',
+    status                    String COMMENT 'The execution status',
+    logs                      String COMMENT 'JSON array of logs',
+    tokens_burnt              String COMMENT 'Tokens burnt (raw string)',
+    gas_burnt                 UInt64 COMMENT 'Gas burnt',
+    execution_outcome_id      String COMMENT 'The execution outcome ID',
+    INDEX block_timestamp_minmax_idx block_timestamp TYPE minmax GRANULARITY 1,
+    INDEX executor_id_bloom_idx executor_id TYPE bloom_filter() GRANULARITY 1,
+    INDEX parent_tx_hash_bloom_idx parent_transaction_hash TYPE bloom_filter() GRANULARITY 1
+) ENGINE = ReplacingMergeTree
+PRIMARY KEY (block_height, execution_outcome_id)
+ORDER BY (block_height, execution_outcome_id)
+SETTINGS index_granularity = 8192;
 
-  select
-    e.block_timestamp::date as day,
-    symbol,
-    coalesce(referral, 'Others') as referral,
-    blockchain,
-    sum(case when e.event = 'mt_transfer' then usd_value end) as transfer_volume,
-    sum(case when e.event = 'mt_mint' then usd_value end) as deposits,
-    sum(case when e.event = 'mt_burn' then usd_value end) * -1 as withdraws,
-    sum(case
-          when e.event = 'mt_mint' then usd_value
-          when e.event = 'mt_burn' then usd_value * -1 end) as netflow
-  from decoded
-  where symbol <> '' and blockchain <> ''
-  group by all
-  order by 1;
 ```

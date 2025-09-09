@@ -1,12 +1,10 @@
-# Environment files
 .env
-.env.*
 *.env
+.env.*
 
 # Rust
 /target/
 **/*.rs.bk
-Cargo.lock
 
 # IDE and editor files
 .idea/
@@ -28,6 +26,8 @@ config.local.*
 *.local.toml
 *.local.yaml
 *.local.yml
+.envrc
+.direnv/
 
 # Credentials and secrets
 *.pem
@@ -39,3 +39,5 @@ credentials.json
 *_dsa
 *_ed25519
 *_ecdsa
+*.p12
+*.pfx
