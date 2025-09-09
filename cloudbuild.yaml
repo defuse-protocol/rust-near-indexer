@@ -16,6 +16,9 @@ steps:
         gsutil cp ./near-defuse-indexer gs://near-indexer-builds/near-defuse-indexer-$(date +%Y%m%d%H%M%S)
         gsutil cp ./near-defuse-indexer gs://near-indexer-builds/near-defuse-indexer
 
+options:
+  logging: CLOUD_LOGGING_ONLY
+
 artifacts:
   objects:
     location: gs://near-indexer-builds/
