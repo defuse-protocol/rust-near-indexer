@@ -10,8 +10,9 @@ pub fn init_clickhouse_client(config: &AppConfig) -> Client {
 }
 
 pub async fn get_last_height(client: &Client) -> Result<u64, clickhouse::error::Error> {
+    tracing::info!("Fetching last indexed block height from ClickHouse...");
     client
-        .query("SELECT max(block_height) FROM events")
+        .query("SELECT max(block_height) FROM transactions")
         .fetch_one::<u64>()
         .await
 }

@@ -4,6 +4,10 @@ use clap::Parser;
 #[derive(Parser, Clone)]
 #[clap(author, version, about)]
 pub struct AppConfig {
+    // Fallback block height to start if no previous height is found in the database
+    #[clap(long, env = "BLOCK_HEIGHT", default_value = "0")]
+    pub block_height: u64,
+
     /// Clickhouse server URL (env: CLICKHOUSE_URL)
     #[clap(long, env = "CLICKHOUSE_URL")]
     pub clickhouse_url: String,
@@ -47,6 +51,12 @@ pub struct AppConfig {
         requires = "metrics_basic_auth_user"
     )]
     pub metrics_basic_auth_password: Option<String>,
+
+    /// Forces the indexer to start from the specified block height provided via --block-height,
+    /// even if a higher block height is found in the database. This is useful when reindexing
+    /// from a specific point is needed.
+    #[clap(long, requires = "block_height", hide = true)]
+    pub force_from_block_height: bool,
 }
 
 pub fn init_tracing() {

@@ -137,6 +137,7 @@ CREATE TABLE defuse_assets (
 PRIMARY KEY (defuse_asset_id, price_updated_at)
 ORDER BY (defuse_asset_id, price_updated_at);
 
+
 CREATE MATERIALIZED VIEW mv_defuse_assets
 REFRESH EVERY 1 DAY APPEND TO defuse_assets AS (
     WITH json_rows AS (
@@ -155,6 +156,7 @@ REFRESH EVERY 1 DAY APPEND TO defuse_assets AS (
         , item.symbol symbol
     FROM json_rows
 );
+
 
 CREATE TABLE events (
     block_height                UInt64 COMMENT 'The height of the block',
@@ -180,6 +182,8 @@ CREATE TABLE events (
 PRIMARY KEY (block_height, related_receipt_id, index_in_log)
 ORDER BY (block_height, related_receipt_id, index_in_log)
 SETTINGS index_granularity = 8192;
+
+
 CREATE TABLE silver_nep_245_events (
     block_height                UInt64 COMMENT 'The height of the block',
     block_timestamp             DateTime64(9, 'UTC') COMMENT 'The timestamp of the block in UTC',
@@ -206,6 +210,8 @@ CREATE TABLE silver_nep_245_events (
 PRIMARY KEY (block_height, related_receipt_id, event, old_owner_id, new_owner_id, token_id)
 ORDER BY (block_height, related_receipt_id, event, old_owner_id, new_owner_id, token_id)
 SETTINGS allow_nullable_key = true, index_granularity = 8192;
+
+
 CREATE MATERIALIZED VIEW mv_silver_nep_245_events TO silver_nep_245_events (
     block_height                UInt64,
     block_timestamp             DateTime64(9, 'UTC'),
@@ -244,6 +250,7 @@ SELECT block_height, block_timestamp, block_hash, tx_hash, contract_id, executio
 FROM tokens_flattened
 SETTINGS function_json_value_return_type_allow_nullable = true;
 
+
 CREATE TABLE silver_dip4_token_diff (
     block_height                UInt64 COMMENT 'The height of the block',
     block_timestamp             DateTime64(9, 'UTC') COMMENT 'The timestamp of the block in UTC',
@@ -271,6 +278,8 @@ CREATE TABLE silver_dip4_token_diff (
 PRIMARY KEY (block_height, related_receipt_id, intent_hash)
 ORDER BY (block_height, related_receipt_id, intent_hash)
 SETTINGS index_granularity = 8192;
+
+
 CREATE MATERIALIZED VIEW mv_silver_dip4_token_diff TO silver_dip4_token_diff (
     block_height                UInt64,
     block_timestamp             DateTime64(9, 'UTC'),
@@ -360,6 +369,8 @@ WITH decoded_events AS (
 SELECT block_height, block_timestamp, block_hash, contract_id, execution_status, version, standard, event, related_receipt_id, related_receipt_predecessor_id, related_receipt_receiver_id, coalesce(JSON_VALUE(data_row, '$.account_id'), '') AS account_id, coalesce(JSON_VALUE(data_row, '$.public_key'), '') AS public_key
 FROM decoded_events
 SETTINGS function_json_value_return_type_allow_nullable = true, function_json_value_return_type_allow_complex = true;
+
+
 CREATE TABLE silver_dip4_intents_executed (
     block_height                UInt64 COMMENT 'The height of the block',
     block_timestamp             DateTime64(9, 'UTC') COMMENT 'The timestamp of the block in UTC',
@@ -429,6 +440,8 @@ CREATE TABLE silver_dip4_fee_changed (
 PRIMARY KEY (block_height, related_receipt_id)
 ORDER BY (block_height, related_receipt_id)
 SETTINGS index_granularity = 8192;
+
+
 CREATE MATERIALIZED VIEW silver_mv_dip4_fee_changed TO silver_dip4_fee_changed (
     block_height                UInt64,
     block_timestamp             DateTime64(9, 'UTC'),
@@ -452,6 +465,7 @@ WITH decoded_events AS (
 SELECT block_height, block_timestamp, block_hash, contract_id, execution_status, version, standard, event, related_receipt_id, related_receipt_predecessor_id, related_receipt_receiver_id, coalesce(JSON_VALUE(data_row, '$.old_fee'), '') AS old_fee, coalesce(JSON_VALUE(data_row, '$.new_fee'), '') AS new_fee
 FROM decoded_events
 SETTINGS function_json_value_return_type_allow_nullable = true, function_json_value_return_type_allow_complex = true;
+
 
 CREATE VIEW gold_view_intents_metrics (
     day Date,
@@ -482,6 +496,7 @@ WHERE (symbol != '') AND (blockchain != '')
 GROUP BY ALL
 ORDER BY 1 ASC;
 
+
 CREATE TABLE transactions (
     block_height         UInt64 COMMENT 'The height of the block',
     block_timestamp      DateTime64(9, 'UTC') COMMENT 'The timestamp of the block in UTC',
@@ -498,6 +513,7 @@ CREATE TABLE transactions (
 PRIMARY KEY (block_height, transaction_hash)
 ORDER BY (block_height, transaction_hash)
 SETTINGS index_granularity = 8192;
+
 
 CREATE TABLE receipts (
     block_height              UInt64 COMMENT 'The height of the block',
@@ -517,6 +533,7 @@ CREATE TABLE receipts (
 PRIMARY KEY (block_height, receipt_id)
 ORDER BY (block_height, receipt_id)
 SETTINGS index_granularity = 8192;
+
 
 CREATE TABLE execution_outcomes (
     block_height              UInt64 COMMENT 'The height of the block',
