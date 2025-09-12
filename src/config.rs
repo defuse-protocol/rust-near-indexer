@@ -71,6 +71,10 @@ pub struct AppConfig {
     /// Service version for tracing (env: OTEL_SERVICE_VERSION, default: 0.2.0)
     #[clap(long, env = "OTEL_SERVICE_VERSION", default_value = "0.2.0")]
     pub otel_service_version: String,
+
+    /// Concurrency level for per-outcome processing (env: OUTCOME_CONCURRENCY, default: 32)
+    #[clap(long, env = "OUTCOME_CONCURRENCY", default_value = "32")]
+    pub outcome_concurrency: usize,
 }
 
 pub async fn init_tracing_with_otel(config: &AppConfig) -> anyhow::Result<()> {

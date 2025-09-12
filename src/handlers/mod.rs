@@ -7,6 +7,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use near_lake_framework::near_indexer_primitives::StreamerMessage;
 
 use crate::cache;
+use crate::config::AppConfig;
 
 mod events;
 mod receipts_and_outcomes;
@@ -22,11 +23,19 @@ pub async fn handle_stream<T: Into<near_lake_framework::providers::NearLakeFrame
     config: T,
     client: Client,
     receipts_cache_arc: cache::ReceiptsCacheArc,
+    app_config: std::sync::Arc<AppConfig>,
 ) -> anyhow::Result<()> {
     let (_, stream) = near_lake_framework::streamer(config.into());
 
     let mut handlers = ReceiverStream::new(stream)
-        .map(|message| handle_streamer_message(message, &client, receipts_cache_arc.clone()))
+        .map(|message| {
+            handle_streamer_message(
+                message,
+                &client,
+                receipts_cache_arc.clone(),
+                app_config.clone(),
+            )
+        })
         .buffer_unordered(1);
 
     while let Some(result) = handlers.next().await {
@@ -37,7 +46,7 @@ pub async fn handle_stream<T: Into<near_lake_framework::providers::NearLakeFrame
 
 #[tracing::instrument(
     name = "handle_streamer_message",
-    skip(message, client, receipts_cache_arc),
+    skip(message, client, receipts_cache_arc, app_config),
     fields(
         block_height = message.block.header.height,
         block_hash = %message.block.header.hash
@@ -47,6 +56,7 @@ async fn handle_streamer_message(
     message: StreamerMessage,
     client: &Client,
     receipts_cache_arc: cache::ReceiptsCacheArc,
+    app_config: std::sync::Arc<AppConfig>,
 ) -> anyhow::Result<()> {
     let start = Instant::now();
     crate::metrics::LATEST_BLOCK_HEIGHT.set(message.block.header.height as i64);
@@ -56,11 +66,11 @@ async fn handle_streamer_message(
     // with mappings from Receipt IDs to their parent Transaction hashes.
     transactions::handle_transactions(&message, client, receipts_cache_arc.clone()).await?;
 
-    // Now process the remaining handlers in parallel with the optimized combined approach
     let receipts_and_outcomes_future = receipts_and_outcomes::handle_receipts_and_outcomes(
         &message,
         client,
         receipts_cache_arc.clone(),
+        app_config.outcome_concurrency,
     );
 
     let events_future = events::handle_events(&message, client, receipts_cache_arc.clone());
