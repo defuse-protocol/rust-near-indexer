@@ -28,6 +28,9 @@ pub async fn insert_rows(
     table: &str,
     rows: &[impl Row + serde::Serialize],
 ) -> anyhow::Result<()> {
+    if rows.is_empty() {
+        return Ok(());
+    }
     let mut insert = client.insert(table)?;
     for row in rows {
         insert.write(row).await?;

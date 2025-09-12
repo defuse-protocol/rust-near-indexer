@@ -74,6 +74,12 @@ lazy_static! {
         "Total number of errors while storing transactions"
     )
     .unwrap();
+    // Exposes build/runtime version as a gauge with value 1; label "version" carries the crate version.
+    pub(crate) static ref VERSION_INFO: IntGaugeVec = register_int_gauge_vec(
+        "indexer_version_info",
+        "Indexer binary version info (value always 1, label 'version'=crate version)",
+        &["version"]
+    ).unwrap();
 }
 
 #[get("/metrics")]

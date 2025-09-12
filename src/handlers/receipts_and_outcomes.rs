@@ -115,7 +115,9 @@ pub async fn handle_receipts_and_outcomes(
         if receipts.is_empty() {
             return Ok::<_, anyhow::Error>(());
         }
-        if let Err(e) = crate::database::insert_rows(client, RECEIPTS_CLICKHOUSE_TABLE, &receipts).await {
+        if let Err(e) =
+            crate::database::insert_rows(client, RECEIPTS_CLICKHOUSE_TABLE, &receipts).await
+        {
             crate::metrics::STORE_ERRORS_TOTAL.inc();
             tracing::error!(error=%e, debug=?e, "Failed to insert receipts");
             return Err(anyhow::anyhow!("receipts insert failed: {e}"));
@@ -128,7 +130,6 @@ pub async fn handle_receipts_and_outcomes(
         .instrument(insert_span)
         .await
     {
-        crate::metrics::STORE_ERRORS_TOTAL.inc();
         tracing::error!(error=%e, "Failed inserting batches");
         return Err(e);
     }
@@ -139,6 +140,11 @@ pub async fn handle_receipts_and_outcomes(
 
 // === Single-pass collection ===
 
+#[tracing::instrument(
+    name = "collect_outcomes_and_receipts",
+    skip(message, receipts_cache_arc),
+    fields(block_height = message.block.header.height)
+)]
 async fn collect_outcomes_and_receipts(
     message: &near_indexer_primitives::StreamerMessage,
     receipts_cache_arc: cache::ReceiptsCacheArc,
@@ -160,44 +166,58 @@ async fn collect_outcomes_and_receipts(
         .flat_map(|shard| shard.receipt_execution_outcomes.iter())
     {
         let receipt_id = outcome.receipt.receipt_id;
-        // Lock only for lookup/promotion + child mapping staging
-        let parent_tx_opt = {
-            let mut cache = receipts_cache_arc.write().await;
-            let mut parent = cache
-                .get(&types::ReceiptOrDataId::ReceiptId(receipt_id))
-                .await;
-            if parent.is_none()
-                && super::any_account_id_of_interest(&[
-                    outcome.receipt.receiver_id.as_str(),
-                    outcome.receipt.predecessor_id.as_str(),
-                ])
+        let mut parent_tx_opt = match receipts_cache_arc
+            .get(&types::ReceiptOrDataId::ReceiptId(receipt_id))
+            .await
+        {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::debug!(receipt_id=%receipt_id, error=%e, "redis get failed (treating as miss)");
+                None
+            }
+        };
+        if parent_tx_opt.is_none()
+            && super::any_account_id_of_interest(&[
+                outcome.receipt.receiver_id.as_str(),
+                outcome.receipt.predecessor_id.as_str(),
+            ])
+        {
+            match receipts_cache_arc
+                .potential_get(&types::ReceiptOrDataId::ReceiptId(receipt_id))
+                .await
             {
-                if let Some(p) = cache
-                    .potential_get(&types::ReceiptOrDataId::ReceiptId(receipt_id))
-                    .await
-                {
-                    cache
+                Ok(Some(p)) => {
+                    receipts_cache_arc
                         .set(types::ReceiptOrDataId::ReceiptId(receipt_id), p.clone())
                         .await;
-                    parent = Some(p.clone());
+                    parent_tx_opt = Some(p.clone());
                     crate::metrics::PROMOTIONS_TOTAL
-                        .with_label_values(&["execution_outcomes"]) // will be defined
+                        .with_label_values(&["execution_outcomes"])
                         .inc();
-                    tracing::info!(receipt_id = %receipt_id, "promoted potential outcome mapping");
-                } else {
-                    // Only increment miss when potential cache lacks mapping
+                    tracing::debug!(receipt_id = %receipt_id, "promoted potential outcome mapping");
+                }
+                Ok(None) => {
                     crate::metrics::POTENTIAL_ASSET_MISS_TOTAL
                         .with_label_values(&["execution_outcomes"])
                         .inc();
                 }
+                Err(e) => {
+                    tracing::warn!(receipt_id=%receipt_id, error=%e, "redis potential_get failed (skip miss metric)");
+                }
             }
-            parent
-        };
+        }
 
         if let Some(parent_tx_hash) = parent_tx_opt {
             let logs_json = {
                 let logs = &outcome.execution_outcome.outcome.logs;
-                if logs.is_empty() { "[]".to_string() } else { serde_json::to_string(logs).unwrap_or_else(|e| { tracing::error!("Failed to serialize logs: {}", e); "[]".to_string() }) }
+                if logs.is_empty() {
+                    "[]".to_string()
+                } else {
+                    serde_json::to_string(logs).unwrap_or_else(|e| {
+                        tracing::error!(error=%e, "Failed to serialize logs");
+                        "[]".to_string()
+                    })
+                }
             };
             let receipt_ids: Vec<String> = outcome
                 .execution_outcome
@@ -220,18 +240,16 @@ async fn collect_outcomes_and_receipts(
                 receipt_ids,
             });
 
-            // Map child receipt ids (small critical section)
-            {
-                let mut cache = receipts_cache_arc.write().await;
-                for child in &outcome.execution_outcome.outcome.receipt_ids {
-                    cache
-                        .set(
-                            types::ReceiptOrDataId::ReceiptId(*child),
-                            parent_tx_hash.clone(),
-                        )
-                        .await;
-                }
-            }
+            let child_ids: Vec<types::ReceiptOrDataId> = outcome
+                .execution_outcome
+                .outcome
+                .receipt_ids
+                .iter()
+                .map(|c| types::ReceiptOrDataId::ReceiptId(*c))
+                .collect();
+            receipts_cache_arc
+                .set_many_receipts(child_ids, &parent_tx_hash)
+                .await;
 
             // Build receipt row
             let r_view = &outcome.receipt;
@@ -273,6 +291,10 @@ async fn collect_outcomes_and_receipts(
         }
     }
 
-    tracing::debug!(outcomes = outcomes_rows.len(), receipts = receipt_rows.len(), "collect_outcomes_and_receipts built rows");
+    tracing::debug!(
+        outcomes = outcomes_rows.len(),
+        receipts = receipt_rows.len(),
+        "collect_outcomes_and_receipts built rows"
+    );
     Ok((outcomes_rows, receipt_rows))
 }

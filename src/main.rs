@@ -24,6 +24,11 @@ async fn main() -> anyhow::Result<()> {
     // Initialize tracing (with or without OpenTelemetry based on configuration)
     init_tracing_with_otel(&config).await?;
 
+    // Expose version info metric once
+    crate::metrics::VERSION_INFO
+        .with_label_values(&[env!("CARGO_PKG_VERSION")])
+        .set(1);
+
     let client = init_clickhouse_client(&config);
 
     let block_height: u64 = config.block_height;

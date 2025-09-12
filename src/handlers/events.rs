@@ -103,13 +103,19 @@ async fn parse_event(
     let start = Instant::now();
     let log_trimmed = log.trim();
 
-    let tx_hash = receipts_cache_arc
-        .write()
-        .await
+    let tx_hash = match receipts_cache_arc
         .get(&crate::types::ReceiptOrDataId::ReceiptId(
             outcome.receipt.receipt_id,
         ))
-        .await;
+        .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            // Redis layer logs at warn; avoid double-noise.
+            tracing::debug!(receipt_id=%outcome.receipt.receipt_id, error=%e, "redis get failed for event (tx_hash omitted)");
+            None
+        }
+    };
 
     if let Some(low_stripped) = log_trimmed.strip_prefix(EVENT_JSON_PREFIX) {
         if let Ok(event) = serde_json::from_str::<EventJson>(low_stripped) {
