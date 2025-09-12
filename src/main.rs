@@ -57,6 +57,7 @@ async fn main() -> anyhow::Result<()> {
     //     .expect("Error creating NEAR Lake framework config");
 
     let receipts_cache_arc: cache::ReceiptsCacheArc = cache::init_cache(&config).await?;
+    let app_config = std::sync::Arc::new(config.clone());
 
     // Initiate metrics http server
     if config.metrics_basic_auth_user.is_some() && config.metrics_basic_auth_password.is_some() {
@@ -79,7 +80,7 @@ async fn main() -> anyhow::Result<()> {
         tokio::spawn(metrics::init_server(config.metrics_server_port)?);
     };
 
-    handlers::handle_stream(lake_config, client, receipts_cache_arc).await?;
+    handlers::handle_stream(lake_config, client, receipts_cache_arc, app_config).await?;
 
     Ok(())
 }

@@ -30,6 +30,7 @@
 //!
 //! Keep inline comments focused on cache edge cases; names should explain everything else.
 
+use futures::StreamExt;
 use near_lake_framework::near_indexer_primitives::{self, near_primitives};
 use tracing::Instrument;
 
@@ -47,11 +48,12 @@ pub async fn handle_receipts_and_outcomes(
     message: &near_indexer_primitives::StreamerMessage,
     client: &clickhouse::Client,
     receipts_cache_arc: cache::ReceiptsCacheArc,
+    outcome_concurrency: usize,
 ) -> anyhow::Result<()> {
     // Single pass: iterate execution outcomes once; build outcome rows and needed receipt rows.
     let single_pass_span = tracing::debug_span!("single_pass_collect");
     let (execution_outcomes, receipts) =
-        collect_outcomes_and_receipts(message, receipts_cache_arc.clone())
+        collect_outcomes_and_receipts(message, receipts_cache_arc.clone(), outcome_concurrency)
             .instrument(single_pass_span)
             .await?;
 
@@ -148,6 +150,7 @@ pub async fn handle_receipts_and_outcomes(
 async fn collect_outcomes_and_receipts(
     message: &near_indexer_primitives::StreamerMessage,
     receipts_cache_arc: cache::ReceiptsCacheArc,
+    outcome_concurrency: usize,
 ) -> anyhow::Result<(Vec<types::ExecutionOutcomeRow>, Vec<types::ReceiptRow>)> {
     let block_height = message.block.header.height;
     let block_timestamp = message.block.header.timestamp;
@@ -161,8 +164,6 @@ async fn collect_outcomes_and_receipts(
     let mut receipt_rows = Vec::with_capacity(estimated_outcomes); // heuristic
 
     // Parallelize per-outcome processing with controlled concurrency.
-    const OUTCOME_CONCURRENCY: usize = 32; // tuneable
-    use futures::StreamExt;
     let all_outcomes: Vec<&near_indexer_primitives::IndexerExecutionOutcomeWithReceipt> = message
         .shards
         .iter()
@@ -309,7 +310,7 @@ async fn collect_outcomes_and_receipts(
             .await
         }
     }))
-    .buffer_unordered(OUTCOME_CONCURRENCY);
+    .buffer_unordered(outcome_concurrency);
 
     while let Some(res) = stream.next().await {
         if let Some((o, r)) = res {

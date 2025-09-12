@@ -37,6 +37,7 @@ The indexer is configured via environment variables. The table below lists the m
 | `AWS_ACCESS_KEY_ID`     |    No    | Required only when using AWS S3/Lake storage for NEAR lake input |
 | `AWS_SECRET_ACCESS_KEY` |    No    | Required only when using AWS S3/Lake storage for NEAR lake input |
 | `REDIS_URL`             |    No    | Redis connection URL for caching (optional) |
+| `OUTCOME_CONCURRENCY`   |    No    | Per-outcome parallelism (default: 32) |
 
 Quick examples:
 
@@ -53,6 +54,7 @@ AWS_SECRET_ACCESS_KEY="your_aws_secret_access_key"
 # optional:
 # REDIS_URL="redis://127.0.0.1:6379"
 # BLOCK_HEIGHT="130636886"
+# OUTCOME_CONCURRENCY="48" # example tuning
 ```
 
 Load the `.env` and run (POSIX shell):
@@ -614,5 +616,3 @@ CREATE TABLE execution_outcomes (
 PRIMARY KEY (block_height, execution_outcome_id)
 ORDER BY (block_height, execution_outcome_id)
 SETTINGS index_granularity = 8192;
-
-```
