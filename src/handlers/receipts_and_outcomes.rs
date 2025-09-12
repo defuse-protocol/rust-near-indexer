@@ -167,31 +167,44 @@ async fn collect_outcomes_and_receipts(
         .flat_map(|shard| shard.receipt_execution_outcomes.iter())
     {
         let receipt_id = outcome.receipt.receipt_id;
-        let mut parent_tx_opt = receipts_cache_arc
+        let mut parent_tx_opt = match receipts_cache_arc
             .get(&types::ReceiptOrDataId::ReceiptId(receipt_id))
-            .await;
+            .await
+        {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(receipt_id=%receipt_id, error=%e, "redis get failed (treating as miss)");
+                None
+            }
+        };
         if parent_tx_opt.is_none()
             && super::any_account_id_of_interest(&[
                 outcome.receipt.receiver_id.as_str(),
                 outcome.receipt.predecessor_id.as_str(),
             ])
         {
-            if let Some(p) = receipts_cache_arc
+            match receipts_cache_arc
                 .potential_get(&types::ReceiptOrDataId::ReceiptId(receipt_id))
                 .await
             {
-                receipts_cache_arc
-                    .set(types::ReceiptOrDataId::ReceiptId(receipt_id), p.clone())
-                    .await;
-                parent_tx_opt = Some(p.clone());
-                crate::metrics::PROMOTIONS_TOTAL
-                    .with_label_values(&["execution_outcomes"])
-                    .inc();
-                tracing::info!(receipt_id = %receipt_id, "promoted potential outcome mapping");
-            } else {
-                crate::metrics::POTENTIAL_ASSET_MISS_TOTAL
-                    .with_label_values(&["execution_outcomes"])
-                    .inc();
+                Ok(Some(p)) => {
+                    receipts_cache_arc
+                        .set(types::ReceiptOrDataId::ReceiptId(receipt_id), p.clone())
+                        .await;
+                    parent_tx_opt = Some(p.clone());
+                    crate::metrics::PROMOTIONS_TOTAL
+                        .with_label_values(&["execution_outcomes"])
+                        .inc();
+                    tracing::info!(receipt_id = %receipt_id, "promoted potential outcome mapping");
+                }
+                Ok(None) => {
+                    crate::metrics::POTENTIAL_ASSET_MISS_TOTAL
+                        .with_label_values(&["execution_outcomes"])
+                        .inc();
+                }
+                Err(e) => {
+                    tracing::warn!(receipt_id=%receipt_id, error=%e, "redis potential_get failed (skip miss metric)");
+                }
             }
         }
 
@@ -228,14 +241,16 @@ async fn collect_outcomes_and_receipts(
                 receipt_ids,
             });
 
-            for child in &outcome.execution_outcome.outcome.receipt_ids {
-                receipts_cache_arc
-                    .set(
-                        types::ReceiptOrDataId::ReceiptId(*child),
-                        parent_tx_hash.clone(),
-                    )
-                    .await;
-            }
+            let child_ids: Vec<types::ReceiptOrDataId> = outcome
+                .execution_outcome
+                .outcome
+                .receipt_ids
+                .iter()
+                .map(|c| types::ReceiptOrDataId::ReceiptId(*c))
+                .collect();
+            receipts_cache_arc
+                .set_many_receipts(child_ids, &parent_tx_hash)
+                .await;
 
             // Build receipt row
             let r_view = &outcome.receipt;

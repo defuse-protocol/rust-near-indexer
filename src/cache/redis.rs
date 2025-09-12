@@ -29,21 +29,24 @@ impl RedisReceiptCache {
         }
     }
 
-    pub async fn get(&self, key: &ReceiptOrDataId) -> Option<ParentTransactionHashString> {
+    pub async fn get(
+        &self,
+        key: &ReceiptOrDataId,
+    ) -> anyhow::Result<Option<ParentTransactionHashString>> {
         let redis_key = Self::key_receipt(key);
         let start = std::time::Instant::now();
         let mut conn = self.manager.clone();
-        match conn
+        let res = conn
             .get::<_, Option<ParentTransactionHashString>>(&redis_key)
-            .await
-        {
+            .await;
+        match res {
             Ok(v) => {
                 tracing::trace!(op="get", key=%redis_key, hit=v.is_some(), ms=%start.elapsed().as_millis());
-                v
+                Ok(v)
             }
             Err(e) => {
                 tracing::warn!(op="get", key=%redis_key, error=%e, "redis error");
-                None
+                Err(e.into())
             }
         }
     }
@@ -65,17 +68,17 @@ impl RedisReceiptCache {
     pub async fn potential_get(
         &self,
         key: &ReceiptOrDataId,
-    ) -> Option<ParentTransactionHashString> {
+    ) -> anyhow::Result<Option<ParentTransactionHashString>> {
         let redis_key = Self::key_potential(key);
         let mut conn = self.manager.clone();
-        match conn
+        let res = conn
             .get::<_, Option<ParentTransactionHashString>>(&redis_key)
-            .await
-        {
-            Ok(v) => v,
+            .await;
+        match res {
+            Ok(v) => Ok(v),
             Err(e) => {
                 tracing::warn!(op="potential_get", key=%redis_key, error=%e);
-                None
+                Err(e.into())
             }
         }
     }
@@ -88,6 +91,43 @@ impl RedisReceiptCache {
             .await
         {
             tracing::warn!(op="potential_set", key=%redis_key, error=%e);
+        }
+    }
+    // Batches multiple SETEX calls into a single pipeline.
+    pub async fn set_many_receipts(
+        &self,
+        keys: Vec<ReceiptOrDataId>,
+        value: &ParentTransactionHashString,
+    ) {
+        if keys.is_empty() {
+            return;
+        }
+        let count = keys.len();
+        let mut conn = self.manager.clone();
+        let mut pipe = redis::pipe();
+        for k in keys {
+            let redis_key = Self::key_receipt(&k);
+            pipe.cmd("SETEX")
+                .arg(&redis_key)
+                .arg(self.ttl_seconds)
+                .arg(value);
+        }
+        // Explicit type annotation for pipeline result
+        let res: redis::RedisResult<()> = pipe.query_async(&mut conn).await;
+        if let Err(e) = res {
+            tracing::warn!(op="set_many", error=%e, "redis pipeline failed");
+        } else {
+            tracing::trace!(op="set_many", count=%count, "batched receipt mappings written");
+        }
+    }
+
+    pub async fn ping(&self) -> anyhow::Result<()> {
+        let mut conn = self.manager.clone();
+        let pong: String = redis::cmd("PING").query_async(&mut conn).await?;
+        if pong.eq_ignore_ascii_case("PONG") {
+            Ok(())
+        } else {
+            anyhow::bail!("Unexpected PING response: {pong}")
         }
     }
 }
