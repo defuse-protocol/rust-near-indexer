@@ -19,6 +19,7 @@ pub async fn get_last_height(client: &Client) -> Result<u64, clickhouse::error::
 
 #[tracing::instrument(
     name = "database_insert",
+    level = "debug",
     skip(client, rows),
     fields(table = table, rows_count = rows.len())
 )]
@@ -26,20 +27,11 @@ pub async fn insert_rows(
     client: &Client,
     table: &str,
     rows: &[impl Row + serde::Serialize],
-) -> Result<(), Box<dyn std::error::Error>> {
-    let start = std::time::Instant::now();
-    let mut insert = client.insert(table).unwrap();
+) -> anyhow::Result<()> {
+    let mut insert = client.insert(table)?;
     for row in rows {
         insert.write(row).await?;
     }
     insert.end().await?;
-
-    let duration = start.elapsed();
-    tracing::debug!(
-        duration_ms = duration.as_millis(),
-        table = table,
-        rows_count = rows.len(),
-        "Database insert completed"
-    );
     Ok(())
 }
