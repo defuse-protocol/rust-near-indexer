@@ -160,134 +160,161 @@ async fn collect_outcomes_and_receipts(
     let mut outcomes_rows = Vec::with_capacity(estimated_outcomes);
     let mut receipt_rows = Vec::with_capacity(estimated_outcomes); // heuristic
 
-    for outcome in message
+    // Parallelize per-outcome processing with controlled concurrency.
+    const OUTCOME_CONCURRENCY: usize = 32; // tuneable
+    use futures::StreamExt;
+    let all_outcomes: Vec<&near_indexer_primitives::IndexerExecutionOutcomeWithReceipt> = message
         .shards
         .iter()
         .flat_map(|shard| shard.receipt_execution_outcomes.iter())
-    {
-        let receipt_id = outcome.receipt.receipt_id;
-        let mut parent_tx_opt = match receipts_cache_arc
-            .get(&types::ReceiptOrDataId::ReceiptId(receipt_id))
-            .await
-        {
-            Ok(v) => v,
-            Err(e) => {
-                tracing::debug!(receipt_id=%receipt_id, error=%e, "redis get failed (treating as miss)");
-                None
-            }
-        };
-        if parent_tx_opt.is_none()
-            && super::any_account_id_of_interest(&[
-                outcome.receipt.receiver_id.as_str(),
-                outcome.receipt.predecessor_id.as_str(),
-            ])
-        {
-            match receipts_cache_arc
-                .potential_get(&types::ReceiptOrDataId::ReceiptId(receipt_id))
-                .await
-            {
-                Ok(Some(p)) => {
+        .collect();
+
+    let mut stream = futures::stream::iter(all_outcomes.into_iter().map(|outcome| {
+        let receipts_cache_arc = receipts_cache_arc.clone();
+        let block_hash_clone = block_hash.clone();
+        async move {
+            let receipt_id = outcome.receipt.receipt_id;
+            let iter_span = tracing::debug_span!(
+                "outcome_iter",
+                receipt_id = %receipt_id,
+                outcome_id = %outcome.execution_outcome.id,
+                receiver = %outcome.receipt.receiver_id,
+                predecessor = %outcome.receipt.predecessor_id,
+                child_receipts = outcome.execution_outcome.outcome.receipt_ids.len()
+            );
+            async {
+                // cache lookup
+                let mut parent_tx_opt = match receipts_cache_arc
+                    .get(&types::ReceiptOrDataId::ReceiptId(receipt_id))
+                    .await
+                {
+                    Ok(v) => v,
+                    Err(e) => {
+                        tracing::debug!(receipt_id=%receipt_id, error=%e, "redis get failed (treating as miss)");
+                        None
+                    }
+                };
+                if parent_tx_opt.is_none()
+                    && super::any_account_id_of_interest(&[
+                        outcome.receipt.receiver_id.as_str(),
+                        outcome.receipt.predecessor_id.as_str(),
+                    ])
+                {
+                    match receipts_cache_arc
+                        .potential_get(&types::ReceiptOrDataId::ReceiptId(receipt_id))
+                        .await
+                    {
+                        Ok(Some(p)) => {
+                            receipts_cache_arc
+                                .set(types::ReceiptOrDataId::ReceiptId(receipt_id), p.clone())
+                                .await;
+                            parent_tx_opt = Some(p.clone());
+                            crate::metrics::PROMOTIONS_TOTAL
+                                .with_label_values(&["execution_outcomes"])
+                                .inc();
+                        }
+                        Ok(None) => {
+                            crate::metrics::POTENTIAL_ASSET_MISS_TOTAL
+                                .with_label_values(&["execution_outcomes"])
+                                .inc();
+                        }
+                        Err(e) => {
+                            tracing::warn!(receipt_id=%receipt_id, error=%e, "redis potential_get failed (skip miss metric)");
+                        }
+                    }
+                }
+                if let Some(parent_tx_hash) = parent_tx_opt {
+                    let logs_json = {
+                        let logs = &outcome.execution_outcome.outcome.logs;
+                        if logs.is_empty() {
+                            "[]".to_string()
+                        } else {
+                            serde_json::to_string(logs).unwrap_or_else(|e| {
+                                tracing::error!(error=%e, "Failed to serialize logs");
+                                "[]".to_string()
+                            })
+                        }
+                    };
+                    let receipt_ids: Vec<String> = outcome
+                        .execution_outcome
+                        .outcome
+                        .receipt_ids
+                        .iter()
+                        .map(|id| id.to_string())
+                        .collect();
+                    let outcome_row = types::ExecutionOutcomeRow {
+                        block_height,
+                        block_timestamp,
+                        block_hash: block_hash_clone.clone(),
+                        execution_outcome_id: outcome.execution_outcome.id.to_string(),
+                        parent_transaction_hash: parent_tx_hash.clone(),
+                        executor_id: outcome.execution_outcome.outcome.executor_id.to_string(),
+                        status: parse_status(outcome.execution_outcome.outcome.status.clone()),
+                        logs: logs_json,
+                        tokens_burnt: outcome.execution_outcome.outcome.tokens_burnt.to_string(),
+                        gas_burnt: outcome.execution_outcome.outcome.gas_burnt,
+                        receipt_ids,
+                    };
+                    let child_ids: Vec<types::ReceiptOrDataId> = outcome
+                        .execution_outcome
+                        .outcome
+                        .receipt_ids
+                        .iter()
+                        .map(|c| types::ReceiptOrDataId::ReceiptId(*c))
+                        .collect();
                     receipts_cache_arc
-                        .set(types::ReceiptOrDataId::ReceiptId(receipt_id), p.clone())
+                        .set_many_receipts(child_ids, &parent_tx_hash)
                         .await;
-                    parent_tx_opt = Some(p.clone());
-                    crate::metrics::PROMOTIONS_TOTAL
-                        .with_label_values(&["execution_outcomes"])
-                        .inc();
-                    tracing::debug!(receipt_id = %receipt_id, "promoted potential outcome mapping");
-                }
-                Ok(None) => {
-                    crate::metrics::POTENTIAL_ASSET_MISS_TOTAL
-                        .with_label_values(&["execution_outcomes"])
-                        .inc();
-                }
-                Err(e) => {
-                    tracing::warn!(receipt_id=%receipt_id, error=%e, "redis potential_get failed (skip miss metric)");
+                    // Receipt row
+                    let r_view = &outcome.receipt;
+                    let actions_json = match r_view.receipt {
+                        near_primitives::views::ReceiptEnumView::Action { ref actions, .. } => {
+                            serde_json::to_string(
+                                &actions
+                                    .iter()
+                                    .flat_map(types::Action::try_from)
+                                    .collect::<Vec<types::Action>>(),
+                            )
+                            .unwrap_or_else(|e| {
+                                tracing::error!("Failed to serialize actions for receipt: {}", e);
+                                "[]".to_string()
+                            })
+                        }
+                        near_primitives::views::ReceiptEnumView::Data { ref data, .. } => {
+                            serde_json::to_string(data).unwrap_or_else(|e| {
+                                tracing::warn!("Failed to serialize receipt data: {}", e);
+                                "null".to_string()
+                            })
+                        }
+                        near_primitives::views::ReceiptEnumView::GlobalContractDistribution { .. } => {
+                            "".to_string()
+                        }
+                    };
+                    let receipt_row = types::ReceiptRow {
+                        block_height,
+                        block_timestamp,
+                        block_hash: block_hash_clone.clone(),
+                        parent_transaction_hash: parent_tx_hash,
+                        receipt_id: r_view.receipt_id.to_string(),
+                        receiver_id: r_view.receiver_id.to_string(),
+                        predecessor_id: r_view.predecessor_id.to_string(),
+                        actions: actions_json,
+                    };
+                    Some((outcome_row, receipt_row))
+                } else {
+                    None
                 }
             }
+            .instrument(iter_span)
+            .await
         }
+    }))
+    .buffer_unordered(OUTCOME_CONCURRENCY);
 
-        if let Some(parent_tx_hash) = parent_tx_opt {
-            let logs_json = {
-                let logs = &outcome.execution_outcome.outcome.logs;
-                if logs.is_empty() {
-                    "[]".to_string()
-                } else {
-                    serde_json::to_string(logs).unwrap_or_else(|e| {
-                        tracing::error!(error=%e, "Failed to serialize logs");
-                        "[]".to_string()
-                    })
-                }
-            };
-            let receipt_ids: Vec<String> = outcome
-                .execution_outcome
-                .outcome
-                .receipt_ids
-                .iter()
-                .map(|id| id.to_string())
-                .collect();
-            outcomes_rows.push(types::ExecutionOutcomeRow {
-                block_height,
-                block_timestamp,
-                block_hash: block_hash.clone(),
-                execution_outcome_id: outcome.execution_outcome.id.to_string(),
-                parent_transaction_hash: parent_tx_hash.clone(),
-                executor_id: outcome.execution_outcome.outcome.executor_id.to_string(),
-                status: parse_status(outcome.execution_outcome.outcome.status.clone()),
-                logs: logs_json,
-                tokens_burnt: outcome.execution_outcome.outcome.tokens_burnt.to_string(),
-                gas_burnt: outcome.execution_outcome.outcome.gas_burnt,
-                receipt_ids,
-            });
-
-            let child_ids: Vec<types::ReceiptOrDataId> = outcome
-                .execution_outcome
-                .outcome
-                .receipt_ids
-                .iter()
-                .map(|c| types::ReceiptOrDataId::ReceiptId(*c))
-                .collect();
-            receipts_cache_arc
-                .set_many_receipts(child_ids, &parent_tx_hash)
-                .await;
-
-            // Build receipt row
-            let r_view = &outcome.receipt;
-            let actions_json = match r_view.receipt {
-                near_primitives::views::ReceiptEnumView::Action { ref actions, .. } => {
-                    serde_json::to_string(
-                        &actions
-                            .iter()
-                            .flat_map(types::Action::try_from)
-                            .collect::<Vec<types::Action>>(),
-                    )
-                    .unwrap_or_else(|e| {
-                        tracing::error!("Failed to serialize actions for receipt: {}", e);
-                        "[]".to_string()
-                    })
-                }
-                near_primitives::views::ReceiptEnumView::Data { ref data, .. } => {
-                    serde_json::to_string(data).unwrap_or_else(|e| {
-                        tracing::warn!("Failed to serialize receipt data: {}", e);
-                        "null".to_string()
-                    })
-                }
-                near_primitives::views::ReceiptEnumView::GlobalContractDistribution { .. } => {
-                    "".to_string()
-                }
-            };
-            receipt_rows.push(types::ReceiptRow {
-                block_height,
-                block_timestamp,
-                block_hash: block_hash.clone(),
-                parent_transaction_hash: parent_tx_hash,
-                receipt_id: r_view.receipt_id.to_string(),
-                receiver_id: r_view.receiver_id.to_string(),
-                predecessor_id: r_view.predecessor_id.to_string(),
-                actions: actions_json,
-            });
-        } else {
-            tracing::trace!(receipt_id = %receipt_id, "outcome skipped (no mapping / not of interest)");
+    while let Some(res) = stream.next().await {
+        if let Some((o, r)) = res {
+            outcomes_rows.push(o);
+            receipt_rows.push(r);
         }
     }
 
