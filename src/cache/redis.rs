@@ -126,14 +126,4 @@ impl RedisReceiptCache {
             tracing::trace!(op="set_many", count=%count, "batched receipt mappings written");
         }
     }
-
-    pub async fn ping(&self) -> anyhow::Result<()> {
-        let mut conn = self.manager.clone();
-        let pong: String = redis::cmd("PING").query_async(&mut conn).await?;
-        if pong.eq_ignore_ascii_case("PONG") {
-            Ok(())
-        } else {
-            anyhow::bail!("Unexpected PING response: {pong}")
-        }
-    }
 }
