@@ -40,4 +40,12 @@ tokio = { version = "1.47.1", features = [
 ] }
 tokio-stream = { version = "0.1" }
 tracing = "0.1.13"
-tracing-subscriber = "0.2.4"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-opentelemetry = "0.20.0"
+opentelemetry = "0.20.0"
+opentelemetry_sdk = { version = "0.20.0", features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.13.0", features = [
+    "http-proto",
+    "reqwest-client",
+] }
+opentelemetry-semantic-conventions = "0.12.0"

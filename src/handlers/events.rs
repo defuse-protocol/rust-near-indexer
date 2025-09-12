@@ -16,6 +16,11 @@ const EVENT_CLICKHOUSE_TABLE: &str = "events";
 /// This function processes only events related to accounts of interest.
 /// It uses the provided Clickhouse client for database operations and
 /// a shared receipts cache to maintain the relationship between receipts and transactions.
+#[tracing::instrument(
+    name = "handle_events",
+    skip(message, client, receipts_cache_arc),
+    fields(block_height = message.block.header.height)
+)]
 pub async fn handle_events(
     message: &near_indexer_primitives::StreamerMessage,
     client: &clickhouse::Client,
@@ -23,57 +28,88 @@ pub async fn handle_events(
 ) -> anyhow::Result<()> {
     let start = Instant::now();
 
-    let mut event_futures = Vec::new();
-    for (index, outcome) in message
+    let event_futures: Vec<_> = message
         .shards
         .iter()
         .flat_map(|shard| shard.receipt_execution_outcomes.iter())
         .enumerate()
+        .flat_map(|(index, outcome)| {
+            outcome
+                .execution_outcome
+                .outcome
+                .logs
+                .iter()
+                .enumerate()
+                .map(|(index_in_log, log)| {
+                    parse_event(
+                        index_in_log,
+                        log,
+                        outcome,
+                        &message.block.header,
+                        index as u64,
+                        receipts_cache_arc.clone(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect();
+
+    let event_results: Vec<Option<EventRow>> = {
+        let _span =
+            tracing::debug_span!("parse_events", events_count = event_futures.len()).entered();
+        join_all(event_futures).await
+    };
+
+    let rows: Vec<EventRow> = event_results.into_iter().flatten().collect();
+
     {
-        let parent_tx_hash = receipts_cache_arc
-            .write()
-            .await
-            .get(&crate::types::ReceiptOrDataId::ReceiptId(
-                outcome.receipt.receipt_id,
-            ))
-            .await;
-        let tx_hash = parent_tx_hash.clone();
-        for (index_in_log, log) in outcome.execution_outcome.outcome.logs.iter().enumerate() {
-            event_futures.push(parse_event(
-                index_in_log,
-                log,
-                outcome,
-                &message.block.header,
-                tx_hash.clone(),
-                index as u64,
-            ));
+        let _span =
+            tracing::debug_span!("insert_events_to_db", events_count = rows.len()).entered();
+        if let Err(err) = crate::database::insert_rows(client, EVENT_CLICKHOUSE_TABLE, &rows).await
+        {
+            crate::metrics::STORE_ERRORS_TOTAL.inc();
+            tracing::error!("Error inserting rows into Clickhouse: {}", err);
+            anyhow::bail!("Failed to insert rows into Clickhouse: {}", err)
         }
     }
 
-    let event_results: Vec<Option<EventRow>> = join_all(event_futures).await;
-    let rows: Vec<EventRow> = event_results.into_iter().flatten().collect();
-
-    if let Err(err) = crate::database::insert_rows(client, EVENT_CLICKHOUSE_TABLE, &rows).await {
-        crate::metrics::STORE_ERRORS_TOTAL.inc();
-        tracing::error!("Error inserting rows into Clickhouse: {}", err);
-        anyhow::bail!("Failed to insert rows into Clickhouse: {}", err)
-    }
-    tracing::debug!("handle_events {:?}", start.elapsed());
+    let duration = start.elapsed();
+    tracing::debug!(
+        duration_ms = duration.as_millis(),
+        "handle_events completed"
+    );
     Ok(())
 }
 
 /// Parse a log entry to extract an EventRow if it contains valid event data.
 /// Returns Some(EventRow) if the log contains a valid event, otherwise None.
+#[tracing::instrument(
+    name = "parse_event",
+    skip(log, outcome, header, receipts_cache_arc, receipt_index_in_block),
+    fields(
+        block_height = header.height,
+        block_timestamp = header.timestamp,
+        block_hash = %header.hash
+    )
+)]
 async fn parse_event(
     index_in_log: usize,
     log: &str,
     outcome: &near_indexer_primitives::IndexerExecutionOutcomeWithReceipt,
     header: &near_indexer_primitives::views::BlockHeaderView,
-    parent_tx_hash: Option<String>,
     receipt_index_in_block: u64,
+    receipts_cache_arc: cache::ReceiptsCacheArc,
 ) -> Option<EventRow> {
     let start = Instant::now();
     let log_trimmed = log.trim();
+
+    let tx_hash = receipts_cache_arc
+        .write()
+        .await
+        .get(&crate::types::ReceiptOrDataId::ReceiptId(
+            outcome.receipt.receipt_id,
+        ))
+        .await;
 
     if let Some(low_stripped) = log_trimmed.strip_prefix(EVENT_JSON_PREFIX) {
         if let Ok(event) = serde_json::from_str::<EventJson>(low_stripped) {
@@ -99,7 +135,7 @@ async fn parse_event(
                     related_receipt_id: outcome.receipt.receipt_id.to_string(),
                     related_receipt_receiver_id: outcome.receipt.receiver_id.to_string(),
                     related_receipt_predecessor_id: outcome.receipt.predecessor_id.to_string(),
-                    tx_hash: parent_tx_hash,
+                    tx_hash,
                     receipt_index_in_block,
                 });
             }

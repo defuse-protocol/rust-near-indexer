@@ -41,13 +41,25 @@ impl RedisCache {
 #[async_trait::async_trait]
 impl super::TxCache for RedisCache {
     async fn get(&mut self, key: &ReceiptOrDataId) -> Option<ParentTransactionHashString> {
+        let span = tracing::debug_span!("redis_cache_get", key = Self::id_str(key));
+        let _enter = span.enter();
+
         let conn = &mut self.manager;
         let redis_key = Self::key_for_receipt(key);
+        let start = std::time::Instant::now();
         match conn
             .get::<_, Option<ParentTransactionHashString>>(&redis_key)
             .await
         {
-            Ok(v) => v,
+            Ok(v) => {
+                let duration = start.elapsed();
+                tracing::debug!(
+                    duration_ms = duration.as_millis(),
+                    hit = v.is_some(),
+                    "Redis GET completed"
+                );
+                v
+            }
             Err(e) => {
                 tracing::warn!("Redis GET failed for key={}: {}", redis_key, e);
                 None
@@ -56,24 +68,46 @@ impl super::TxCache for RedisCache {
     }
 
     async fn set(&mut self, key: ReceiptOrDataId, value: ParentTransactionHashString) {
+        let span = tracing::debug_span!("redis_cache_set", key = Self::id_str(&key));
+        let _enter = span.enter();
+
         let conn = &mut self.manager;
         let redis_key = Self::key_for_receipt(&key);
-        let _ = conn
+        let start = std::time::Instant::now();
+        let result = conn
             .set_ex::<_, _, ()>(redis_key, value, self.ttl_seconds)
             .await;
+        let duration = start.elapsed();
+        tracing::debug!(
+            duration_ms = duration.as_millis(),
+            success = result.is_ok(),
+            "Redis SET completed"
+        );
     }
 
     async fn potential_get(
         &mut self,
         key: &ReceiptOrDataId,
     ) -> Option<ParentTransactionHashString> {
+        let span = tracing::debug_span!("redis_potential_cache_get", key = Self::id_str(key));
+        let _enter = span.enter();
+
         let conn = &mut self.manager;
         let redis_key = Self::key_for_potential(key);
+        let start = std::time::Instant::now();
         match conn
             .get::<_, Option<ParentTransactionHashString>>(&redis_key)
             .await
         {
-            Ok(v) => v,
+            Ok(v) => {
+                let duration = start.elapsed();
+                tracing::debug!(
+                    duration_ms = duration.as_millis(),
+                    hit = v.is_some(),
+                    "Redis potential GET completed"
+                );
+                v
+            }
             Err(e) => {
                 tracing::warn!("Redis GET failed for key={}: {}", redis_key, e);
                 None
@@ -82,10 +116,20 @@ impl super::TxCache for RedisCache {
     }
 
     async fn potential_set(&mut self, key: ReceiptOrDataId, value: ParentTransactionHashString) {
+        let span = tracing::debug_span!("redis_potential_cache_set", key = Self::id_str(&key));
+        let _enter = span.enter();
+
         let conn = &mut self.manager;
         let redis_key = Self::key_for_potential(&key);
-        let _ = conn
+        let start = std::time::Instant::now();
+        let result = conn
             .set_ex::<_, _, ()>(redis_key, value, self.ttl_seconds)
             .await;
+        let duration = start.elapsed();
+        tracing::debug!(
+            duration_ms = duration.as_millis(),
+            success = result.is_ok(),
+            "Redis potential SET completed"
+        );
     }
 }

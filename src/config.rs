@@ -1,4 +1,6 @@
 use clap::Parser;
+use opentelemetry_otlp::WithExportConfig;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 /// Application configuration loaded from CLI arguments and environment variables.
 #[derive(Parser, Clone)]
@@ -57,11 +59,66 @@ pub struct AppConfig {
     /// from a specific point is needed.
     #[clap(long, requires = "block_height", hide = true)]
     pub force_from_block_height: bool,
+
+    /// OpenTelemetry OTLP endpoint for trace export (env: OTEL_EXPORTER_OTLP_ENDPOINT)
+    #[clap(long, env = "OTEL_EXPORTER_OTLP_ENDPOINT")]
+    pub otel_endpoint: Option<String>,
+
+    /// Service name for tracing (env: OTEL_SERVICE_NAME, default: near-defuse-indexer)
+    #[clap(long, env = "OTEL_SERVICE_NAME", default_value = "near-defuse-indexer")]
+    pub otel_service_name: String,
+
+    /// Service version for tracing (env: OTEL_SERVICE_VERSION, default: 0.2.0)
+    #[clap(long, env = "OTEL_SERVICE_VERSION", default_value = "0.2.0")]
+    pub otel_service_version: String,
 }
 
-pub fn init_tracing() {
+pub async fn init_tracing_with_otel(config: &AppConfig) -> anyhow::Result<()> {
     let rust_log = std::env::var("RUST_LOG")
         .unwrap_or_else(|_| "near_defuse_indexer=info,near_lake_framework=info".to_string());
     let env_filter = tracing_subscriber::EnvFilter::new(rust_log);
-    tracing_subscriber::fmt().with_env_filter(env_filter).init();
+
+    if let Some(otlp_endpoint) = &config.otel_endpoint {
+        tracing::info!(
+            "Initializing OpenTelemetry tracing with endpoint: {}",
+            otlp_endpoint
+        );
+
+        let tracer = opentelemetry_otlp::new_pipeline()
+            .tracing()
+            .with_exporter(
+                opentelemetry_otlp::new_exporter()
+                    .http()
+                    .with_endpoint(otlp_endpoint),
+            )
+            .with_trace_config(opentelemetry_sdk::trace::config().with_resource(
+                opentelemetry_sdk::Resource::new(vec![
+                    opentelemetry::KeyValue::new(
+                        opentelemetry_semantic_conventions::resource::SERVICE_NAME,
+                        config.otel_service_name.clone(),
+                    ),
+                    opentelemetry::KeyValue::new(
+                        opentelemetry_semantic_conventions::resource::SERVICE_VERSION,
+                        config.otel_service_version.clone(),
+                    ),
+                ]),
+            ))
+            .install_batch(opentelemetry_sdk::runtime::Tokio)?;
+
+        let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);
+
+        tracing_subscriber::registry()
+            .with(env_filter)
+            .with(tracing_subscriber::fmt::layer())
+            .with(telemetry)
+            .init();
+    } else {
+        tracing::info!("OpenTelemetry endpoint not configured, using default tracing");
+        tracing_subscriber::registry()
+            .with(env_filter)
+            .with(tracing_subscriber::fmt::layer())
+            .init();
+    }
+
+    Ok(())
 }

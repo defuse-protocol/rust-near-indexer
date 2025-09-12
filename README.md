@@ -8,6 +8,7 @@ This project is a Rust-based indexer that processes blockchain events from NEAR 
 - Filter and structure events based on specific standards.
 - Store events in a Clickhouse database.
 - Persist transaction cache to Redis with automatic expiration after 50 blocks.
+- **Performance Tracing**: OpenTelemetry integration for identifying performance bottlenecks
 
 ## Requirements
 
@@ -94,6 +95,65 @@ What the indexer does
 Logging and metrics
 - The indexer emits logs (see `RUST_LOG` environment variable to control level). Use `RUST_LOG=info` or `debug` while developing.
 - Metrics are exported for monitoring (see `metrics.rs` in `src/` for details). Hook Prometheus to the exposed endpoint if you run metrics collection.
+
+## Performance Tracing
+
+The indexer includes OpenTelemetry tracing support to help identify performance bottlenecks. This is particularly useful when trying to improve processing speed from the current 0.4 BPS to the target 15 BPS.
+
+### Quick Setup
+
+1. **Start Jaeger for trace collection:**
+```bash
+./run_with_tracing.sh
+```
+This script will:
+- Start Jaeger using Docker
+- Configure environment variables
+- Build and run the indexer with tracing enabled
+
+2. **Manual setup:**
+```bash
+# Start Jaeger
+docker-compose -f docker-compose.tracing.yml up jaeger -d
+
+# Add to your .env file:
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318/v1/traces
+OTEL_SERVICE_NAME=near-defuse-indexer
+RUST_LOG=near_defuse_indexer=debug,near_lake_framework=info
+
+# Run the indexer
+cargo run --release
+```
+
+3. **View traces:**
+   - Open http://localhost:16686 (Jaeger UI)
+   - Select service: `near-defuse-indexer`
+   - Search for traces with operation: `handle_streamer_message`
+
+### What Gets Traced
+
+The tracing implementation provides detailed timing for:
+
+- **Block Processing**: `handle_streamer_message` - Total time per block
+- **Handler Performance**: Individual timing for:
+  - `handle_transactions` - Transaction processing time
+  - `handle_receipts` - Receipt processing time
+  - `handle_execution_outcomes` - Execution outcome processing time
+  - `handle_events` - Event processing time
+- **Database Operations**: `database_insert` - ClickHouse insertion timing
+- **Cache Operations**: Redis/local cache get/set operations
+
+### Performance Analysis
+
+Use `./analyze_performance.sh` for analysis tips and current metrics.
+
+Key questions the tracing helps answer:
+- Which handler is the bottleneck?
+- Are database inserts slow?
+- Is caching helping or hurting?
+- Do certain blocks process much slower than others?
+
+For detailed tracing documentation, see [TRACING.md](./TRACING.md).
 
 ## Project Structure
 
