@@ -111,10 +111,12 @@ impl RedisReceiptCache {
         let mut pipe = redis::pipe();
         for k in keys {
             let redis_key = Self::key_receipt(&k);
-            pipe.cmd("SETEX")
+            // Use modern SET with EX instead of legacy SETEX
+            pipe.cmd("SET")
                 .arg(&redis_key)
-                .arg(self.ttl_seconds)
-                .arg(value);
+                .arg(value)
+                .arg("EX")
+                .arg(self.ttl_seconds);
         }
         // Explicit type annotation for pipeline result
         let res: redis::RedisResult<()> = pipe.query_async(&mut conn).await;
