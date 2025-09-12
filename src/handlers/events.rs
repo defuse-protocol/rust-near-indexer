@@ -104,8 +104,6 @@ async fn parse_event(
     let log_trimmed = log.trim();
 
     let tx_hash = receipts_cache_arc
-        .write()
-        .await
         .get(&crate::types::ReceiptOrDataId::ReceiptId(
             outcome.receipt.receipt_id,
         ))

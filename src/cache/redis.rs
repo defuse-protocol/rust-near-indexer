@@ -1,19 +1,13 @@
+use crate::types::{ParentTransactionHashString, ReceiptOrDataId};
 use redis::AsyncCommands;
 
-use crate::types::{ParentTransactionHashString, ReceiptOrDataId};
-
-/// Redis-backed cache implementation.
-pub struct RedisCache {
+#[derive(Clone)]
+pub struct RedisReceiptCache {
     manager: redis::aio::ConnectionManager,
     ttl_seconds: u64,
 }
 
-impl RedisCache {
-    /// Create a new RedisCache instance.
-    ///
-    /// # Arguments
-    /// * `url` - Redis server URL
-    /// * `ttl_seconds` - TTL for cached values in seconds
+impl RedisReceiptCache {
     pub async fn new(url: &str, ttl_seconds: u64) -> anyhow::Result<Self> {
         let client = redis::Client::open(url)?;
         Ok(Self {
@@ -22,114 +16,78 @@ impl RedisCache {
         })
     }
 
-    fn key_for_receipt(id: &ReceiptOrDataId) -> String {
+    fn key_receipt(id: &ReceiptOrDataId) -> String {
         format!("receipt_cache:{}", Self::id_str(id))
     }
-
-    fn key_for_potential(id: &ReceiptOrDataId) -> String {
+    fn key_potential(id: &ReceiptOrDataId) -> String {
         format!("potential_cache:{}", Self::id_str(id))
     }
-
     fn id_str(id: &ReceiptOrDataId) -> String {
         match id {
             ReceiptOrDataId::ReceiptId(h) => h.to_string(),
             ReceiptOrDataId::_DataId(h) => h.to_string(),
         }
     }
-}
 
-#[async_trait::async_trait]
-impl super::TxCache for RedisCache {
-    async fn get(&mut self, key: &ReceiptOrDataId) -> Option<ParentTransactionHashString> {
-        let span = tracing::debug_span!("redis_cache_get", key = Self::id_str(key));
-        let _enter = span.enter();
-
-        let conn = &mut self.manager;
-        let redis_key = Self::key_for_receipt(key);
+    pub async fn get(&self, key: &ReceiptOrDataId) -> Option<ParentTransactionHashString> {
+        let redis_key = Self::key_receipt(key);
         let start = std::time::Instant::now();
+        let mut conn = self.manager.clone();
         match conn
             .get::<_, Option<ParentTransactionHashString>>(&redis_key)
             .await
         {
             Ok(v) => {
-                let duration = start.elapsed();
-                tracing::debug!(
-                    duration_ms = duration.as_millis(),
-                    hit = v.is_some(),
-                    "Redis GET completed"
-                );
+                tracing::trace!(op="get", key=%redis_key, hit=v.is_some(), ms=%start.elapsed().as_millis());
                 v
             }
             Err(e) => {
-                tracing::warn!("Redis GET failed for key={}: {}", redis_key, e);
+                tracing::warn!(op="get", key=%redis_key, error=%e, "redis error");
                 None
             }
         }
     }
 
-    async fn set(&mut self, key: ReceiptOrDataId, value: ParentTransactionHashString) {
-        let span = tracing::debug_span!("redis_cache_set", key = Self::id_str(&key));
-        let _enter = span.enter();
-
-        let conn = &mut self.manager;
-        let redis_key = Self::key_for_receipt(&key);
+    pub async fn set(&self, key: ReceiptOrDataId, value: ParentTransactionHashString) {
+        let redis_key = Self::key_receipt(&key);
         let start = std::time::Instant::now();
-        let result = conn
-            .set_ex::<_, _, ()>(redis_key, value, self.ttl_seconds)
-            .await;
-        let duration = start.elapsed();
-        tracing::debug!(
-            duration_ms = duration.as_millis(),
-            success = result.is_ok(),
-            "Redis SET completed"
-        );
+        let mut conn = self.manager.clone();
+        if let Err(e) = conn
+            .set_ex::<_, _, ()>(redis_key.clone(), value, self.ttl_seconds)
+            .await
+        {
+            tracing::warn!(op="set", key=%redis_key, error=%e, "redis set failed");
+        } else {
+            tracing::trace!(op="set", key=%redis_key, ms=%start.elapsed().as_millis());
+        }
     }
 
-    async fn potential_get(
-        &mut self,
+    pub async fn potential_get(
+        &self,
         key: &ReceiptOrDataId,
     ) -> Option<ParentTransactionHashString> {
-        let span = tracing::debug_span!("redis_potential_cache_get", key = Self::id_str(key));
-        let _enter = span.enter();
-
-        let conn = &mut self.manager;
-        let redis_key = Self::key_for_potential(key);
-        let start = std::time::Instant::now();
+        let redis_key = Self::key_potential(key);
+        let mut conn = self.manager.clone();
         match conn
             .get::<_, Option<ParentTransactionHashString>>(&redis_key)
             .await
         {
-            Ok(v) => {
-                let duration = start.elapsed();
-                tracing::debug!(
-                    duration_ms = duration.as_millis(),
-                    hit = v.is_some(),
-                    "Redis potential GET completed"
-                );
-                v
-            }
+            Ok(v) => v,
             Err(e) => {
-                tracing::warn!("Redis GET failed for key={}: {}", redis_key, e);
+                tracing::warn!(op="potential_get", key=%redis_key, error=%e);
                 None
             }
         }
     }
 
-    async fn potential_set(&mut self, key: ReceiptOrDataId, value: ParentTransactionHashString) {
-        let span = tracing::debug_span!("redis_potential_cache_set", key = Self::id_str(&key));
-        let _enter = span.enter();
-
-        let conn = &mut self.manager;
-        let redis_key = Self::key_for_potential(&key);
-        let start = std::time::Instant::now();
-        let result = conn
-            .set_ex::<_, _, ()>(redis_key, value, self.ttl_seconds)
-            .await;
-        let duration = start.elapsed();
-        tracing::debug!(
-            duration_ms = duration.as_millis(),
-            success = result.is_ok(),
-            "Redis potential SET completed"
-        );
+    pub async fn potential_set(&self, key: ReceiptOrDataId, value: ParentTransactionHashString) {
+        let redis_key = Self::key_potential(&key);
+        let mut conn = self.manager.clone();
+        if let Err(e) = conn
+            .set_ex::<_, _, ()>(redis_key.clone(), value, self.ttl_seconds)
+            .await
+        {
+            tracing::warn!(op="potential_set", key=%redis_key, error=%e);
+        }
     }
 }

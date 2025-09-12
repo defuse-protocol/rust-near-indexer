@@ -140,8 +140,6 @@ async fn parse_transactions(
         // Later, while Receipt will be looking for a parent Transaction hash
         // it will be able to find it in the ReceiptsCache
         receipts_cache_arc
-            .write()
-            .await
             .set(
                 types::ReceiptOrDataId::ReceiptId(*converted_into_receipt_id),
                 transaction_hash.clone(),
@@ -173,8 +171,6 @@ async fn parse_transactions(
             converted_into_receipt_id,
         );
         receipts_cache_arc
-            .write()
-            .await
             .potential_set(
                 types::ReceiptOrDataId::ReceiptId(*converted_into_receipt_id),
                 transaction_hash.clone(),
