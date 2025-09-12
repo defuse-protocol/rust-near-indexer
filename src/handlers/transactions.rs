@@ -1,4 +1,4 @@
-use std::time::Instant;
+// Removed explicit Instant timings; spans provide durations.
 
 use near_lake_framework::near_indexer_primitives;
 
@@ -15,36 +15,53 @@ const TRANSACTIONS_CLICKHOUSE_TABLE: &str = "transactions";
 /// a shared receipts cache to maintain the relationship between receipts and transactions.
 ///
 /// Note: Execution Outcomes for Receipts are handled separately in `handlers/execution_outcomes.rs`.
+#[tracing::instrument(
+    name = "handle_transactions",
+    skip(message, client, receipts_cache_arc),
+    fields(block_height = message.block.header.height)
+)]
 pub async fn handle_transactions(
     message: &near_indexer_primitives::StreamerMessage,
     client: &clickhouse::Client,
     receipts_cache_arc: cache::ReceiptsCacheArc,
 ) -> anyhow::Result<()> {
-    let start = Instant::now();
-    let (transactions, transaction_execution_outcomes) = try_join!(
-        extract_transactions(message, receipts_cache_arc.clone()),
-        extract_transaction_execution_outcomes(message)
-    )?;
+    let (transactions, transaction_execution_outcomes) = {
+        let _span = tracing::debug_span!("extract_transactions_and_outcomes").entered();
+        try_join!(
+            extract_transactions(message, receipts_cache_arc.clone()),
+            extract_transaction_execution_outcomes(message)
+        )?
+    };
 
-    let result = match try_join!(
-        crate::database::insert_rows(client, TRANSACTIONS_CLICKHOUSE_TABLE, &transactions,),
-        crate::database::insert_rows(
-            client,
-            super::execution_outcomes::EXECUTION_OUTCOMES_CLICKHOUSE_TABLE,
-            &transaction_execution_outcomes,
+    let result = {
+        let _span = tracing::debug_span!(
+            "insert_transactions_to_db",
+            transactions_count = transactions.len(),
+            execution_outcomes_count = transaction_execution_outcomes.len()
         )
-    ) {
-        Ok((_res_transactions, _res_execution_outcomes)) => Ok(()),
-        Err(err) => {
-            crate::metrics::STORE_ERRORS_TOTAL.inc();
-            tracing::error!("Error during try_join for database inserts: {}", err);
-            anyhow::bail!(
-                "Failed to insert transactions or execution outcomes into Clickhouse: {}",
-                err
+        .entered();
+
+        match try_join!(
+            crate::database::insert_rows(client, TRANSACTIONS_CLICKHOUSE_TABLE, &transactions,),
+            crate::database::insert_rows(
+                client,
+                super::receipts_and_outcomes::EXECUTION_OUTCOMES_CLICKHOUSE_TABLE,
+                &transaction_execution_outcomes,
             )
+        ) {
+            Ok((_res_transactions, _res_execution_outcomes)) => Ok(()),
+            Err(err) => {
+                crate::metrics::STORE_ERRORS_TOTAL.inc();
+                tracing::error!("Error during try_join for database inserts: {}", err);
+                anyhow::bail!(
+                    "Failed to insert transactions or execution outcomes into Clickhouse: {}",
+                    err
+                )
+            }
         }
     };
-    tracing::debug!("handle_transactions {:?}", start.elapsed());
+
+    tracing::debug!("handle_transactions completed");
     result
 }
 
@@ -53,7 +70,6 @@ async fn extract_transactions(
     message: &near_indexer_primitives::StreamerMessage,
     receipts_cache_arc: cache::ReceiptsCacheArc,
 ) -> anyhow::Result<Vec<types::TransactionRow>> {
-    let start = Instant::now();
     let block_height = message.block.header.height;
     let block_hash = message.block.header.hash.to_string();
     let block_timestamp = message.block.header.timestamp;
@@ -92,7 +108,7 @@ async fn extract_transactions(
     crate::metrics::ASSETS_IN_BLOCK_CAPTURED_TOTAL
         .with_label_values(&["transactions"])
         .set(transactions.len() as i64);
-    tracing::debug!("extract_transactions {:?}", start.elapsed());
+    tracing::debug!("extract_transactions done");
     Ok(transactions)
 }
 
@@ -173,7 +189,6 @@ async fn parse_transactions(
 async fn extract_transaction_execution_outcomes(
     message: &near_indexer_primitives::StreamerMessage,
 ) -> anyhow::Result<Vec<types::ExecutionOutcomeRow>> {
-    let start = Instant::now();
     let block_height = message.block.header.height;
     let block_hash = message.block.header.hash.to_string();
     let block_timestamp = message.block.header.timestamp;
@@ -198,10 +213,7 @@ async fn extract_transaction_execution_outcomes(
             .into_iter()
             .flatten()
             .collect();
-    tracing::debug!(
-        "extract_transaction_execution_outcomes {:?}",
-        start.elapsed()
-    );
+    tracing::debug!("extract_transaction_execution_outcomes done");
     Ok(execution_outcomes)
 }
 

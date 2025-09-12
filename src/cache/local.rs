@@ -25,13 +25,33 @@ impl LocalCache {
 #[async_trait::async_trait]
 impl super::TxCache for LocalCache {
     async fn get(&mut self, key: &ReceiptOrDataId) -> Option<ParentTransactionHashString> {
+        let span = tracing::debug_span!("local_cache_get");
+        let _enter = span.enter();
+
+        let start = std::time::Instant::now();
         let mut cache = self.watchlist_cache.write().await;
-        cache.get(key).cloned()
+        let result = cache.get(key).cloned();
+        let duration = start.elapsed();
+        tracing::debug!(
+            duration_ms = duration.as_millis(),
+            hit = result.is_some(),
+            "Local cache GET completed"
+        );
+        result
     }
 
     async fn set(&mut self, key: ReceiptOrDataId, value: ParentTransactionHashString) {
+        let span = tracing::debug_span!("local_cache_set");
+        let _enter = span.enter();
+
+        let start = std::time::Instant::now();
         let mut cache = self.watchlist_cache.write().await;
         cache.put(key, value);
+        let duration = start.elapsed();
+        tracing::debug!(
+            duration_ms = duration.as_millis(),
+            "Local cache SET completed"
+        );
     }
 
     async fn potential_get(

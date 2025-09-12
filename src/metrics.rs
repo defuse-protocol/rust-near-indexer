@@ -63,6 +63,12 @@ lazy_static! {
         &["asset_type"] // This declares a label named `asset_type`
     ).unwrap();
 
+    pub(crate) static ref PROMOTIONS_TOTAL: IntGaugeVec = register_int_gauge_vec(
+        "promotions_total",
+        "Total number of cache promotions from potential to main",
+        &["asset_type"]
+    ).unwrap();
+
     pub(crate) static ref STORE_ERRORS_TOTAL: IntCounter = try_create_int_counter(
         "total_tx_store_errors",
         "Total number of errors while storing transactions"

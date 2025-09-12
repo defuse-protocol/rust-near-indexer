@@ -2,7 +2,7 @@ use clap::Parser;
 #[macro_use]
 extern crate lazy_static;
 
-use crate::config::{AppConfig, init_tracing};
+use crate::config::{AppConfig, init_tracing_with_otel};
 use crate::database::{get_last_height, init_clickhouse_client};
 
 mod cache;
@@ -18,9 +18,11 @@ pub(crate) const CONTRACT_ACCOUNT_IDS_OF_INTEREST: &[&str] =
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenv::dotenv().ok();
-    init_tracing();
 
     let config = AppConfig::parse();
+
+    // Initialize tracing (with or without OpenTelemetry based on configuration)
+    init_tracing_with_otel(&config).await?;
 
     let client = init_clickhouse_client(&config);
 
