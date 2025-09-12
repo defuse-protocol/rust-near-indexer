@@ -111,7 +111,8 @@ async fn parse_event(
     {
         Ok(v) => v,
         Err(e) => {
-            tracing::warn!(receipt_id=%outcome.receipt.receipt_id, error=%e, "redis get failed for event (tx_hash omitted)");
+            // Redis layer logs at warn; avoid double-noise.
+            tracing::debug!(receipt_id=%outcome.receipt.receipt_id, error=%e, "redis get failed for event (tx_hash omitted)");
             None
         }
     };

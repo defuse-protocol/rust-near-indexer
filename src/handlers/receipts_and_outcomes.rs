@@ -130,7 +130,6 @@ pub async fn handle_receipts_and_outcomes(
         .instrument(insert_span)
         .await
     {
-        crate::metrics::STORE_ERRORS_TOTAL.inc();
         tracing::error!(error=%e, "Failed inserting batches");
         return Err(e);
     }
@@ -173,7 +172,7 @@ async fn collect_outcomes_and_receipts(
         {
             Ok(v) => v,
             Err(e) => {
-                tracing::warn!(receipt_id=%receipt_id, error=%e, "redis get failed (treating as miss)");
+                tracing::debug!(receipt_id=%receipt_id, error=%e, "redis get failed (treating as miss)");
                 None
             }
         };
@@ -195,7 +194,7 @@ async fn collect_outcomes_and_receipts(
                     crate::metrics::PROMOTIONS_TOTAL
                         .with_label_values(&["execution_outcomes"])
                         .inc();
-                    tracing::info!(receipt_id = %receipt_id, "promoted potential outcome mapping");
+                    tracing::debug!(receipt_id = %receipt_id, "promoted potential outcome mapping");
                 }
                 Ok(None) => {
                     crate::metrics::POTENTIAL_ASSET_MISS_TOTAL
@@ -215,7 +214,7 @@ async fn collect_outcomes_and_receipts(
                     "[]".to_string()
                 } else {
                     serde_json::to_string(logs).unwrap_or_else(|e| {
-                        tracing::error!("Failed to serialize logs: {}", e);
+                        tracing::error!(error=%e, "Failed to serialize logs");
                         "[]".to_string()
                     })
                 }

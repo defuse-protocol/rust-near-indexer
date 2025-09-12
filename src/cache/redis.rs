@@ -70,12 +70,16 @@ impl RedisReceiptCache {
         key: &ReceiptOrDataId,
     ) -> anyhow::Result<Option<ParentTransactionHashString>> {
         let redis_key = Self::key_potential(key);
+        let start = std::time::Instant::now();
         let mut conn = self.manager.clone();
         let res = conn
             .get::<_, Option<ParentTransactionHashString>>(&redis_key)
             .await;
         match res {
-            Ok(v) => Ok(v),
+            Ok(v) => {
+                tracing::trace!(op="potential_get", key=%redis_key, hit=v.is_some(), ms=%start.elapsed().as_millis());
+                Ok(v)
+            }
             Err(e) => {
                 tracing::warn!(op="potential_get", key=%redis_key, error=%e);
                 Err(e.into())
