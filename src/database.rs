@@ -28,6 +28,7 @@ pub async fn insert_rows(
     table: &str,
     rows: &[impl Row + serde::Serialize],
 ) -> anyhow::Result<()> {
+    tracing::debug!("Inserting {} rows into table {}", rows.len(), table);
     if rows.is_empty() {
         return Ok(());
     }
