@@ -100,7 +100,6 @@ async fn parse_event(
     receipt_index_in_block: u64,
     receipts_cache_arc: cache::ReceiptsCacheArc,
 ) -> Option<EventRow> {
-    let start = Instant::now();
     let log_trimmed = log.trim();
 
     let tx_hash = match receipts_cache_arc
@@ -124,7 +123,6 @@ async fn parse_event(
                 && (log_trimmed.contains("dip4") || log_trimmed.contains("nep245"))
             {
                 // println!("Event: {}", log_trimmed);
-                tracing::debug!("parse_event {:?}", start.elapsed());
                 return Some(EventRow {
                     block_height: header.height,
                     block_timestamp: header.timestamp,
@@ -147,7 +145,6 @@ async fn parse_event(
             }
         }
     }
-    tracing::debug!("parse_event {:?}", start.elapsed());
     None
 }
 
