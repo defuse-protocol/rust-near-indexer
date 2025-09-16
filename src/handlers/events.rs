@@ -5,7 +5,7 @@ use near_lake_framework::near_indexer_primitives;
 use crate::CONTRACT_ACCOUNT_IDS_OF_INTEREST;
 use crate::cache;
 use crate::types::{EventJson, EventRow};
-use futures::{stream, StreamExt};
+use futures::{StreamExt, stream};
 
 const EVENT_JSON_PREFIX: &str = "EVENT_JSON:";
 const EVENT_CLICKHOUSE_TABLE: &str = "events";
@@ -213,7 +213,7 @@ async fn parse_event(
         related_receipt_id: outcome.receipt.receipt_id.to_string(),
         related_receipt_receiver_id: outcome.receipt.receiver_id.to_string(),
         related_receipt_predecessor_id: outcome.receipt.predecessor_id.to_string(),
-        tx_hash,
+        tx_hash: Some(tx_hash),
         receipt_index_in_block,
     }))
 }
