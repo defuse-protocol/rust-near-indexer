@@ -5,7 +5,7 @@ use near_lake_framework::near_indexer_primitives;
 use crate::CONTRACT_ACCOUNT_IDS_OF_INTEREST;
 use crate::cache;
 use crate::types::{EventJson, EventRow};
-use futures::future::join_all;
+use futures::{stream, StreamExt};
 
 const EVENT_JSON_PREFIX: &str = "EVENT_JSON:";
 const EVENT_CLICKHOUSE_TABLE: &str = "events";
@@ -25,6 +25,7 @@ pub async fn handle_events(
     message: &near_indexer_primitives::StreamerMessage,
     client: &clickhouse::Client,
     receipts_cache_arc: cache::ReceiptsCacheArc,
+    events_concurrency: usize,
 ) -> anyhow::Result<()> {
     let start = Instant::now();
 
@@ -54,13 +55,31 @@ pub async fn handle_events(
         })
         .collect();
 
-    let event_results: Vec<Option<EventRow>> = {
+    let event_results = {
         let _span =
             tracing::debug_span!("parse_events", events_count = event_futures.len()).entered();
-        join_all(event_futures).await
+        stream::iter(event_futures)
+            .buffer_unordered(events_concurrency)
+            .collect::<Vec<_>>()
+            .await
     };
 
-    let rows: Vec<EventRow> = event_results.into_iter().flatten().collect();
+    let event_count = event_results.len();
+    let rows: Vec<EventRow> =
+        event_results
+            .into_iter()
+            .try_fold(Vec::with_capacity(event_count), |mut acc, res| match res {
+                Ok(Some(r)) => {
+                    acc.push(r);
+                    Ok(acc)
+                }
+                Ok(None) => Ok(acc),
+                Err(e) => {
+                    crate::metrics::STORE_ERRORS_TOTAL.inc();
+                    tracing::error!(error = %e, "Failed parsing event row");
+                    Err(e)
+                }
+            })?;
 
     {
         let _span =
@@ -99,10 +118,36 @@ async fn parse_event(
     header: &near_indexer_primitives::views::BlockHeaderView,
     receipt_index_in_block: u64,
     receipts_cache_arc: cache::ReceiptsCacheArc,
-) -> Option<EventRow> {
+) -> anyhow::Result<Option<EventRow>> {
+    // 0. Fast contract filter: drop immediately if executor not of interest.
+    let contract_id_ref = outcome.execution_outcome.outcome.executor_id.as_str();
+    if !CONTRACT_ACCOUNT_IDS_OF_INTEREST.contains(&contract_id_ref) {
+        return Ok(None);
+    }
+
     let log_trimmed = log.trim();
 
-    let tx_hash = match receipts_cache_arc
+    // 1. Quick prefix check
+    let Some(low_stripped) = log_trimmed.strip_prefix(EVENT_JSON_PREFIX) else {
+        return Ok(None);
+    };
+
+    // 2. Parse JSON early
+    let event: EventJson = match serde_json::from_str::<EventJson>(low_stripped) {
+        Ok(ev) => ev,
+        Err(e) => {
+            tracing::warn!(error = %e, "Failed to deserialize event JSON, skipping");
+            return Ok(None);
+        }
+    };
+
+    // 3. Standard / family filter
+    if !(log_trimmed.contains("dip4") || log_trimmed.contains("nep245")) {
+        return Ok(None);
+    }
+
+    // 4. Resolve parent tx hash (only now do cache lookups)
+    let mut tx_hash = match receipts_cache_arc
         .get(&crate::types::ReceiptOrDataId::ReceiptId(
             outcome.receipt.receipt_id,
         ))
@@ -110,42 +155,67 @@ async fn parse_event(
     {
         Ok(v) => v,
         Err(e) => {
-            // Redis layer logs at warn; avoid double-noise.
             tracing::debug!(receipt_id=%outcome.receipt.receipt_id, error=%e, "redis get failed for event (tx_hash omitted)");
             None
         }
     };
 
-    if let Some(low_stripped) = log_trimmed.strip_prefix(EVENT_JSON_PREFIX) {
-        if let Ok(event) = serde_json::from_str::<EventJson>(low_stripped) {
-            let contract_id = &outcome.execution_outcome.outcome.executor_id.to_string();
-            if CONTRACT_ACCOUNT_IDS_OF_INTEREST.contains(&contract_id.as_str())
-                && (log_trimmed.contains("dip4") || log_trimmed.contains("nep245"))
-            {
-                // println!("Event: {}", log_trimmed);
-                return Some(EventRow {
-                    block_height: header.height,
-                    block_timestamp: header.timestamp,
-                    block_hash: header.hash.to_string(),
-                    contract_id: contract_id.to_string(),
-                    execution_status: parse_status(
-                        outcome.execution_outcome.outcome.status.clone(),
-                    ),
-                    version: event.version,
-                    standard: event.standard,
-                    index_in_log: index_in_log as u64,
-                    event: event.event,
-                    data: event.data.to_string(),
-                    related_receipt_id: outcome.receipt.receipt_id.to_string(),
-                    related_receipt_receiver_id: outcome.receipt.receiver_id.to_string(),
-                    related_receipt_predecessor_id: outcome.receipt.predecessor_id.to_string(),
-                    tx_hash,
-                    receipt_index_in_block,
-                });
+    if tx_hash.is_none()
+        && super::any_account_id_of_interest(&[
+            outcome.receipt.receiver_id.as_str(),
+            outcome.receipt.predecessor_id.as_str(),
+        ])
+    {
+        match receipts_cache_arc
+            .potential_get(&crate::types::ReceiptOrDataId::ReceiptId(
+                outcome.receipt.receipt_id,
+            ))
+            .await
+        {
+            Ok(Some(parent)) => {
+                receipts_cache_arc
+                    .set(
+                        crate::types::ReceiptOrDataId::ReceiptId(outcome.receipt.receipt_id),
+                        parent.clone(),
+                    )
+                    .await;
+                crate::metrics::PROMOTIONS_TOTAL
+                    .with_label_values(&["events"])
+                    .inc();
+                tx_hash = Some(parent);
+            }
+            Ok(None) => {
+                crate::metrics::POTENTIAL_ASSET_MISS_TOTAL
+                    .with_label_values(&["events"])
+                    .inc();
+            }
+            Err(e) => {
+                tracing::debug!(receipt_id=%outcome.receipt.receipt_id, error=%e, "redis potential_get failed for event");
             }
         }
     }
-    None
+
+    let Some(tx_hash) = tx_hash else {
+        return Ok(None);
+    };
+
+    Ok(Some(EventRow {
+        block_height: header.height,
+        block_timestamp: header.timestamp,
+        block_hash: header.hash.to_string(),
+        contract_id: contract_id_ref.to_string(),
+        execution_status: parse_status(outcome.execution_outcome.outcome.status.clone()),
+        version: event.version,
+        standard: event.standard,
+        index_in_log: index_in_log as u64,
+        event: event.event,
+        data: event.data.to_string(),
+        related_receipt_id: outcome.receipt.receipt_id.to_string(),
+        related_receipt_receiver_id: outcome.receipt.receiver_id.to_string(),
+        related_receipt_predecessor_id: outcome.receipt.predecessor_id.to_string(),
+        tx_hash,
+        receipt_index_in_block,
+    }))
 }
 
 /// Helper to parse the execution status into a string representation.
