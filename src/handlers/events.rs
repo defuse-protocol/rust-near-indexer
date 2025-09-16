@@ -5,7 +5,7 @@ use near_lake_framework::near_indexer_primitives;
 use crate::CONTRACT_ACCOUNT_IDS_OF_INTEREST;
 use crate::cache;
 use crate::types::{EventJson, EventRow};
-use futures::future::join_all;
+use futures::{stream, StreamExt};
 
 const EVENT_JSON_PREFIX: &str = "EVENT_JSON:";
 const EVENT_CLICKHOUSE_TABLE: &str = "events";
@@ -25,6 +25,7 @@ pub async fn handle_events(
     message: &near_indexer_primitives::StreamerMessage,
     client: &clickhouse::Client,
     receipts_cache_arc: cache::ReceiptsCacheArc,
+    events_concurrency: usize,
 ) -> anyhow::Result<()> {
     let start = Instant::now();
 
@@ -57,7 +58,10 @@ pub async fn handle_events(
     let event_results = {
         let _span =
             tracing::debug_span!("parse_events", events_count = event_futures.len()).entered();
-        join_all(event_futures).await
+        stream::iter(event_futures)
+            .buffer_unordered(events_concurrency)
+            .collect::<Vec<_>>()
+            .await
     };
 
     let event_count = event_results.len();
@@ -132,7 +136,7 @@ async fn parse_event(
     let event: EventJson = match serde_json::from_str::<EventJson>(low_stripped) {
         Ok(ev) => ev,
         Err(e) => {
-            tracing::warn!(error = %e, event_json = %low_stripped, "Failed to deserialize event JSON, skipping");
+            tracing::warn!(error = %e, "Failed to deserialize event JSON, skipping");
             return Ok(None);
         }
     };

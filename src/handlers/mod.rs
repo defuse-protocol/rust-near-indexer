@@ -73,7 +73,12 @@ async fn handle_streamer_message(
         app_config.outcome_concurrency,
     );
 
-    let events_future = events::handle_events(&message, client, receipts_cache_arc.clone());
+    let events_future = events::handle_events(
+        &message,
+        client,
+        receipts_cache_arc.clone(),
+        app_config.outcome_concurrency,
+    );
 
     // Run receipts+outcomes and events in parallel
     tokio::try_join!(receipts_and_outcomes_future, events_future)?;
