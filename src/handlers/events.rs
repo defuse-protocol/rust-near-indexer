@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use near_lake_framework::near_indexer_primitives;
+use blocksapi_rs::near_indexer_primitives;
 
 use crate::CONTRACT_ACCOUNT_IDS_OF_INTEREST;
 use crate::cache;

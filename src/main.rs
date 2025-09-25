@@ -43,18 +43,12 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("Starting indexer at block height: {}", start_block);
 
-    let lake_config = near_lake_framework::LakeConfigBuilder::default()
-        .mainnet()
-        .start_block_height(start_block)
+    let blocksapi_config = blocksapi_rs::BlocksApiConfigBuilder::default()
+        .server_addr(config.blocksapi_server_addr.clone())
+        .start_on(Some(start_block))
+        .blocksapi_token(Some(config.blocksapi_token.clone()))
         .build()
-        .expect("Error creating NEAR Lake framework config");
-
-    // TODO: consider making the provider configurable (e.g., via CLI argument)
-    // let lake_config = near_lake_framework::FastNearConfigBuilder::default()
-    //     .mainnet()
-    //     .start_block_height(start_block)
-    //     .build()
-    //     .expect("Error creating NEAR Lake framework config");
+        .expect("Error creating Blocks API config");
 
     let receipts_cache_arc: cache::ReceiptsCacheArc = cache::init_cache(&config).await?;
     let app_config = std::sync::Arc::new(config.clone());
@@ -80,7 +74,7 @@ async fn main() -> anyhow::Result<()> {
         tokio::spawn(metrics::init_server(config.metrics_server_port)?);
     };
 
-    handlers::handle_stream(lake_config, client, receipts_cache_arc, app_config).await?;
+    handlers::handle_stream(blocksapi_config, client, receipts_cache_arc, app_config).await?;
 
     Ok(())
 }

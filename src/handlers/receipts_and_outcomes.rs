@@ -30,8 +30,8 @@
 //!
 //! Keep inline comments focused on cache edge cases; names should explain everything else.
 
+use blocksapi_rs::near_indexer_primitives::{self, near_primitives};
 use futures::StreamExt;
-use near_lake_framework::near_indexer_primitives::{self, near_primitives};
 use tracing::Instrument;
 
 use crate::{cache, handlers::events::parse_status, types};

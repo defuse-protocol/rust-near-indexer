@@ -2,7 +2,7 @@ use clickhouse::Row;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use near_lake_framework::near_indexer_primitives::{self, near_primitives};
+use blocksapi_rs::near_indexer_primitives::{self, near_primitives};
 
 #[derive(Clone, Hash, PartialEq, Eq, Debug)]
 pub enum ReceiptOrDataId {

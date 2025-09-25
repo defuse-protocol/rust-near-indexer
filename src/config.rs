@@ -75,6 +75,14 @@ pub struct AppConfig {
     /// Concurrency level for per-outcome processing (env: OUTCOME_CONCURRENCY, default: 32)
     #[clap(long, env = "OUTCOME_CONCURRENCY", default_value = "32")]
     pub outcome_concurrency: usize,
+
+    /// Blocks API server address (env: BLOCKSAPI_SERVER_ADDR)
+    #[clap(long, env = "BLOCKSAPI_SERVER_ADDR")]
+    pub blocksapi_server_addr: String,
+
+    /// Blocks API token (env: BLOCKSAPI_TOKEN)
+    #[clap(long, env = "BLOCKSAPI_TOKEN")]
+    pub blocksapi_token: String,
 }
 
 pub async fn init_tracing_with_otel(config: &AppConfig) -> anyhow::Result<()> {
