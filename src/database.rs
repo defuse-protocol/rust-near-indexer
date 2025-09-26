@@ -1,5 +1,8 @@
 use crate::config::AppConfig;
 use clickhouse::{Client, Row};
+use tokio_retry::{Retry, strategy::FixedInterval};
+
+const SAVE_ATTEMPTS: usize = 20;
 
 pub fn init_clickhouse_client(config: &AppConfig) -> Client {
     Client::default()
@@ -24,6 +27,27 @@ pub async fn get_last_height(client: &Client) -> Result<u64, clickhouse::error::
     fields(table = table, rows_count = rows.len())
 )]
 pub async fn insert_rows(
+    client: &Client,
+    table: &str,
+    rows: &[impl Row + serde::Serialize],
+) -> anyhow::Result<()> {
+    let retry_strategy = FixedInterval::from_millis(500).take(SAVE_ATTEMPTS);
+    Retry::spawn(retry_strategy, || async {
+        try_insert_rows(client, table, rows).await.map_err(|e| {
+            tracing::warn!("Failed to insert rows into {}: {}", table, e);
+            e
+        })
+    })
+    .await
+}
+
+#[tracing::instrument(
+    name = "try_database_insert",
+    level = "debug",
+    skip(client, rows),
+    fields(table = table, rows_count = rows.len())
+)]
+async fn try_insert_rows(
     client: &Client,
     table: &str,
     rows: &[impl Row + serde::Serialize],
