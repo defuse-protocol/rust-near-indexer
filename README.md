@@ -1,6 +1,6 @@
 # NEAR Defuse Custom Indexer
 
-This project is a Rust-based indexer that processes blockchain events from NEAR Protocol and inserts them into a Clickhouse database for efficient querying. It uses [NEAR Lake Framework](https://github.com/near/near-lake-framework) for streaming blockchain data and stores structured events in a Clickhouse database.
+This project is a Rust-based indexer that processes blockchain events from NEAR Protocol and inserts them into a Clickhouse database for efficient querying. It uses [blocksapi-rs](https://github.com/defuse-protocol/blocksapi-rs) for streaming blockchain data and stores structured events in a Clickhouse database.
 
 ## Features
 
@@ -34,10 +34,10 @@ The indexer is configured via environment variables. The table below lists the m
 | `CLICKHOUSE_PASSWORD`   |    Yes   | Clickhouse password |
 | `CLICKHOUSE_DATABASE`   |    Yes   | Clickhouse database name (default: `mainnet`) |
 | `BLOCK_HEIGHT`          |    No    | Start block height for indexing — if unset the indexer resumes from last saved state |
-| `AWS_ACCESS_KEY_ID`     |    No    | Required only when using AWS S3/Lake storage for NEAR lake input |
-| `AWS_SECRET_ACCESS_KEY` |    No    | Required only when using AWS S3/Lake storage for NEAR lake input |
 | `REDIS_URL`             |    No    | Redis connection URL for caching (optional) |
 | `OUTCOME_CONCURRENCY`   |    No    | Per-outcome parallelism (default: 32) |
+| `BLOCKSAPI_SERVER_ADDR` |    No    | Blocks API server address |
+| `BLOCKSAPI_TOKEN`       |    No    | Blocks API access token |
 
 Quick examples:
 
@@ -49,8 +49,8 @@ CLICKHOUSE_URL="http://localhost:18123"
 CLICKHOUSE_DATABASE="mainnet"
 CLICKHOUSE_USER="clickhouse"
 CLICKHOUSE_PASSWORD="secret"
-AWS_ACCESS_KEY_ID="your_aws_access_key_id"
-AWS_SECRET_ACCESS_KEY="your_aws_secret_access_key"
+BLOCKSAPI_SERVER_ADDR="http://localhost:4300"
+BLOCKSAPI_TOKEN="blocksapi_access_token"
 # optional:
 # REDIS_URL="redis://127.0.0.1:6379"
 # BLOCK_HEIGHT="130636886"
@@ -187,7 +187,7 @@ Contributing
 Here is the Clickhouse schema to run the indexer:
 
 ```sql
-CREATE TABLE defuse_indexer.defuse_assets (
+CREATE TABLE defuse_assets (
     blockchain          String COMMENT 'The blockchain',
     contract_address    String COMMENT 'The contract address',
     decimals            UInt64 COMMENT 'Decimals',
@@ -200,8 +200,8 @@ PRIMARY KEY (defuse_asset_id, price_updated_at)
 ORDER BY (defuse_asset_id, price_updated_at);
 
 
-CREATE MATERIALIZED VIEW defuse_indexer.mv_defuse_assets
-REFRESH EVERY 1 DAY APPEND TO defuse_indexer.defuse_assets AS (
+CREATE MATERIALIZED VIEW mv_defuse_assets
+REFRESH EVERY 1 DAY APPEND TO defuse_assets AS (
     WITH json_rows AS (
         SELECT
         arrayJoin(items) item
@@ -220,7 +220,7 @@ REFRESH EVERY 1 DAY APPEND TO defuse_indexer.defuse_assets AS (
 );
 
 
-CREATE TABLE defuse_indexer.events (
+CREATE TABLE events (
     block_height                UInt64 COMMENT 'The height of the block',
     block_timestamp             DateTime64(9, 'UTC') COMMENT 'The timestamp of the block in UTC',
     block_hash                  String COMMENT 'The hash of the block',
@@ -246,7 +246,7 @@ ORDER BY (block_height, related_receipt_id, index_in_log)
 SETTINGS index_granularity = 8192;
 
 
-CREATE TABLE defuse_indexer.silver_nep_245_events (
+CREATE TABLE silver_nep_245_events (
     block_height                UInt64 COMMENT 'The height of the block',
     block_timestamp             DateTime64(9, 'UTC') COMMENT 'The timestamp of the block in UTC',
     block_hash                  String COMMENT 'The hash of the block',
@@ -274,7 +274,7 @@ ORDER BY (block_height, related_receipt_id, event, old_owner_id, new_owner_id, t
 SETTINGS allow_nullable_key = true, index_granularity = 8192;
 
 
-CREATE MATERIALIZED VIEW defuse_indexer.mv_silver_nep_245_events TO defuse_indexer.silver_nep_245_events (
+CREATE MATERIALIZED VIEW mv_silver_nep_245_events TO silver_nep_245_events (
     block_height                UInt64,
     block_timestamp             DateTime64(9, 'UTC'),
     block_hash                  String,
@@ -295,7 +295,7 @@ CREATE MATERIALIZED VIEW defuse_indexer.mv_silver_nep_245_events TO defuse_index
 ) AS
 WITH decoded_events AS (
     SELECT *, arrayJoin(JSONExtractArrayRaw(data)) AS data_row
-    FROM defuse_indexer.events
+    FROM events
     WHERE (standard = 'nep245') AND (block_timestamp >= '2025-02-12 22:10:00')
 ), tokens AS (
     SELECT *, coalesce(JSON_VALUE(data_row, '$.memo'), '') AS memo,
@@ -313,7 +313,7 @@ FROM tokens_flattened
 SETTINGS function_json_value_return_type_allow_nullable = true;
 
 
-CREATE TABLE defuse_indexer.silver_dip4_token_diff (
+CREATE TABLE silver_dip4_token_diff (
     block_height                UInt64 COMMENT 'The height of the block',
     block_timestamp             DateTime64(9, 'UTC') COMMENT 'The timestamp of the block in UTC',
     block_hash                  String COMMENT 'The hash of the block',
@@ -342,7 +342,7 @@ ORDER BY (block_height, related_receipt_id, intent_hash)
 SETTINGS index_granularity = 8192;
 
 
-CREATE MATERIALIZED VIEW defuse_indexer.mv_silver_dip4_token_diff TO defuse_indexer.silver_dip4_token_diff (
+CREATE MATERIALIZED VIEW mv_silver_dip4_token_diff TO silver_dip4_token_diff (
     block_height                UInt64,
     block_timestamp             DateTime64(9, 'UTC'),
     block_hash                  String,
@@ -364,7 +364,7 @@ CREATE MATERIALIZED VIEW defuse_indexer.mv_silver_dip4_token_diff TO defuse_inde
 ) AS
 WITH decoded_events AS (
     SELECT *, arrayJoin(JSONExtractArrayRaw(data)) AS data_row
-    FROM defuse_indexer.events
+    FROM events
     WHERE (contract_id IN ('defuse-alpha.near', 'intents.near')) AND (standard = 'dip4') AND (event = 'token_diff') AND (block_timestamp >= '2025-02-18 22:55:00')
 ), parsed_json AS (
     SELECT *, coalesce(JSON_VALUE(data_row, '$.account_id'), '') AS account_id,
@@ -386,7 +386,7 @@ FROM diff_kvs
 SETTINGS function_json_value_return_type_allow_nullable = true, function_json_value_return_type_allow_complex = true;
 
 
-CREATE TABLE defuse_indexer.silver_dip4_public_keys (
+CREATE TABLE silver_dip4_public_keys (
     block_height                UInt64 COMMENT 'The height of the block',
     block_timestamp             DateTime64(9, 'UTC') COMMENT 'The timestamp of the block in UTC',
     block_hash                  String COMMENT 'The hash of the block',
@@ -410,7 +410,7 @@ ORDER BY (block_height, related_receipt_id, account_id)
 SETTINGS index_granularity = 8192;
 
 
-CREATE MATERIALIZED VIEW defuse_indexer.mv_silver_dip4_public_keys TO defuse_indexer.silver_dip4_public_keys (
+CREATE MATERIALIZED VIEW mv_silver_dip4_public_keys TO silver_dip4_public_keys (
     block_height                UInt64,
     block_timestamp             DateTime64(9, 'UTC'),
     block_hash                  String,
@@ -427,7 +427,7 @@ CREATE MATERIALIZED VIEW defuse_indexer.mv_silver_dip4_public_keys TO defuse_ind
 ) AS
 WITH decoded_events AS (
     SELECT *, data AS data_row
-    FROM defuse_indexer.events
+    FROM events
     WHERE (contract_id IN ('defuse-alpha.near', 'intents.near')) AND (standard = 'dip4') AND (event IN ('public_key_added', 'public_key_removed')) AND (block_timestamp >= '2025-02-12 23:35:00')
 )
 SELECT block_height, block_timestamp, block_hash, contract_id, execution_status, version, standard, event, related_receipt_id, related_receipt_predecessor_id, related_receipt_receiver_id, coalesce(JSON_VALUE(data_row, '$.account_id'), '') AS account_id, coalesce(JSON_VALUE(data_row, '$.public_key'), '') AS public_key
@@ -435,7 +435,7 @@ FROM decoded_events
 SETTINGS function_json_value_return_type_allow_nullable = true, function_json_value_return_type_allow_complex = true;
 
 
-CREATE TABLE defuse_indexer.silver_dip4_intents_executed (
+CREATE TABLE silver_dip4_intents_executed (
     block_height                UInt64 COMMENT 'The height of the block',
     block_timestamp             DateTime64(9, 'UTC') COMMENT 'The timestamp of the block in UTC',
     block_hash                  String COMMENT 'The hash of the block',
@@ -459,7 +459,7 @@ ORDER BY (block_height, related_receipt_id, intent_hash)
 SETTINGS index_granularity = 8192;
 
 
-CREATE MATERIALIZED VIEW defuse_indexer.mv_silver_dip4_intents_executed TO defuse_indexer.silver_dip4_intents_executed (
+CREATE MATERIALIZED VIEW mv_silver_dip4_intents_executed TO silver_dip4_intents_executed (
     block_height                UInt64,
     block_timestamp             DateTime64(9, 'UTC'),
     block_hash                  String,
@@ -476,7 +476,7 @@ CREATE MATERIALIZED VIEW defuse_indexer.mv_silver_dip4_intents_executed TO defus
 ) AS
 WITH decoded_events AS (
     SELECT *, arrayJoin(JSONExtractArrayRaw(data)) AS data_row
-    FROM defuse_indexer.events
+    FROM events
     WHERE (contract_id IN ('defuse-alpha.near', 'intents.near')) AND (standard = 'dip4') AND (event = 'intents_executed') AND (block_timestamp >= '2025-02-12 23:45:00')
 )
 SELECT block_height, block_timestamp, block_hash, contract_id, execution_status, version, standard, event, related_receipt_id, related_receipt_predecessor_id, related_receipt_receiver_id, coalesce(JSON_VALUE(data_row, '$.account_id'), '') AS account_id, coalesce(JSON_VALUE(data_row, '$.intent_hash'), '') AS intent_hash
@@ -484,7 +484,7 @@ FROM decoded_events
 SETTINGS function_json_value_return_type_allow_nullable = true, function_json_value_return_type_allow_complex = true;
 
 
-CREATE TABLE defuse_indexer.silver_dip4_fee_changed (
+CREATE TABLE silver_dip4_fee_changed (
     block_height                UInt64 COMMENT 'The height of the block',
     block_timestamp             DateTime64(9, 'UTC') COMMENT 'The timestamp of the block in UTC',
     block_hash                  String COMMENT 'The hash of the block',
@@ -508,7 +508,7 @@ ORDER BY (block_height, related_receipt_id)
 SETTINGS index_granularity = 8192;
 
 
-CREATE MATERIALIZED VIEW defuse_indexer.silver_mv_dip4_fee_changed TO defuse_indexer.silver_dip4_fee_changed (
+CREATE MATERIALIZED VIEW silver_mv_dip4_fee_changed TO silver_dip4_fee_changed (
     block_height                UInt64,
     block_timestamp             DateTime64(9, 'UTC'),
     block_hash                  String,
@@ -525,7 +525,7 @@ CREATE MATERIALIZED VIEW defuse_indexer.silver_mv_dip4_fee_changed TO defuse_ind
 ) AS
 WITH decoded_events AS (
     SELECT *, data AS data_row
-    FROM defuse_indexer.events
+    FROM events
     WHERE (contract_id IN ('defuse-alpha.near', 'intents.near')) AND (standard = 'dip4') AND (event = 'fee_changed') AND (block_timestamp >= '2025-02-12 23:50:00')
 )
 SELECT block_height, block_timestamp, block_hash, contract_id, execution_status, version, standard, event, related_receipt_id, related_receipt_predecessor_id, related_receipt_receiver_id, coalesce(JSON_VALUE(data_row, '$.old_fee'), '') AS old_fee, coalesce(JSON_VALUE(data_row, '$.new_fee'), '') AS new_fee
@@ -533,7 +533,7 @@ FROM decoded_events
 SETTINGS function_json_value_return_type_allow_nullable = true, function_json_value_return_type_allow_complex = true;
 
 
-CREATE VIEW defuse_indexer.gold_view_intents_metrics (
+CREATE VIEW gold_view_intents_metrics (
     day Date,
     symbol String,
     referral String,
@@ -547,9 +547,9 @@ WITH decoded AS (
     SELECT DISTINCT e.block_timestamp, e.block_hash, e.event, e.memo, e.old_owner_id, e.new_owner_id, e.token_id,
            (e.amount / pow(10, a.decimals)) * a.price AS usd_value,
            a.symbol, a.blockchain, d.referral
-    FROM defuse_indexer.silver_nep_245_events AS e
-    LEFT JOIN defuse_indexer.silver_dip4_token_diff AS d ON d.related_receipt_id = e.related_receipt_id
-    LEFT JOIN defuse_indexer.defuse_assets AS a ON (CAST(e.block_timestamp, 'date') = CAST(a.price_updated_at, 'date')) AND (e.token_id = a.defuse_asset_id)
+    FROM silver_nep_245_events AS e
+    LEFT JOIN silver_dip4_token_diff AS d ON d.related_receipt_id = e.related_receipt_id
+    LEFT JOIN defuse_assets AS a ON (CAST(e.block_timestamp, 'date') = CAST(a.price_updated_at, 'date')) AND (e.token_id = a.defuse_asset_id)
     WHERE NOT ((length(referral) = 0) AND (length(memo) = 0))
 )
 SELECT CAST(e.block_timestamp, 'date') AS day, symbol, coalesce(referral, 'Others') AS referral, blockchain,
@@ -563,7 +563,7 @@ GROUP BY ALL
 ORDER BY 1 ASC;
 
 
-CREATE TABLE defuse_indexer.transactions (
+CREATE TABLE transactions (
     block_height         UInt64 COMMENT 'The height of the block',
     block_timestamp      DateTime64(9, 'UTC') COMMENT 'The timestamp of the block in UTC',
     block_hash           String COMMENT 'The hash of the block',
@@ -581,7 +581,7 @@ ORDER BY (block_height, transaction_hash)
 SETTINGS index_granularity = 8192;
 
 
-CREATE TABLE defuse_indexer.receipts (
+CREATE TABLE receipts (
     block_height              UInt64 COMMENT 'The height of the block',
     block_timestamp           DateTime64(9, 'UTC') COMMENT 'The timestamp of the block in UTC',
     block_hash                String COMMENT 'The hash of the block',
@@ -601,7 +601,7 @@ ORDER BY (block_height, receipt_id)
 SETTINGS index_granularity = 8192;
 
 
-CREATE TABLE defuse_indexer.execution_outcomes (
+CREATE TABLE execution_outcomes (
     block_height              UInt64 COMMENT 'The height of the block',
     block_timestamp           DateTime64(9, 'UTC') COMMENT 'The timestamp of the block in UTC',
     block_hash                String COMMENT 'The hash of the block',
