@@ -47,6 +47,10 @@ async fn main() -> anyhow::Result<()> {
         .server_addr(config.blocksapi_server_addr.clone())
         .start_on(Some(start_block))
         .blocksapi_token(Some(config.blocksapi_token.clone()))
+        .batch_size(50)
+        .concurrency(1000)
+        .buffer_size(2 * 1024 * 1024 * 1024)
+        .concurrency_limit(2048)
         .build()
         .expect("Error creating Blocks API config");
 
