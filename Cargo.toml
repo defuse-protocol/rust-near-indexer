@@ -49,4 +49,4 @@ opentelemetry-otlp = { version = "0.13.0", features = [
 ] }
 opentelemetry-semantic-conventions = "0.12.0"
 
-blocksapi-rs = { git = "https://github.com/defuse-protocol/blocksapi-rs.git", rev = "1884d9386281ad8efa013fe19934d59923deb272" }
+blocksapi-rs = { git = "https://github.com/defuse-protocol/blocksapi-rs.git", rev = "206ec650bbfbb5cbb9c38f900054b01569f440c7" }
