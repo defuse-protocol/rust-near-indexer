@@ -563,7 +563,7 @@ dependencies = [
 [[package]]
 name = "blocksapi-rs"
 version = "0.1.0"
-source = "git+https://github.com/defuse-protocol/blocksapi-rs.git?branch=main#1884d9386281ad8efa013fe19934d59923deb272"
+source = "git+https://github.com/defuse-protocol/blocksapi-rs.git?rev=1884d9386281ad8efa013fe19934d59923deb272#1884d9386281ad8efa013fe19934d59923deb272"
 dependencies = [
  "anyhow",
  "ciborium",
