@@ -1,6 +1,6 @@
 // Removed explicit Instant timings; spans provide durations.
 
-use blocksapi_rs::near_indexer_primitives;
+use blocksapi::near_indexer_primitives;
 
 use crate::{cache, handlers::events::parse_status, types};
 use tokio::try_join;

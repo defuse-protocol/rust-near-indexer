@@ -43,7 +43,7 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("Starting indexer at block height: {}", start_block);
 
-    let blocksapi_config = blocksapi_rs::BlocksApiConfigBuilder::default()
+    let blocksapi_config = blocksapi::BlocksApiConfigBuilder::default()
         .server_addr(config.blocksapi_server_addr.clone())
         .start_on(Some(start_block))
         .blocksapi_token(Some(config.blocksapi_token.clone()))

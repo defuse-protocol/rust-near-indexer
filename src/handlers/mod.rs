@@ -4,7 +4,7 @@ use clickhouse::Client;
 use futures::StreamExt;
 use tokio_stream::wrappers::ReceiverStream;
 
-use blocksapi_rs::near_indexer_primitives::StreamerMessage;
+use blocksapi::near_indexer_primitives::StreamerMessage;
 
 use crate::cache;
 use crate::config::AppConfig;
@@ -20,12 +20,12 @@ pub(crate) fn any_account_id_of_interest(account_ids: &[&str]) -> bool {
 }
 
 pub async fn handle_stream(
-    config: blocksapi_rs::BlocksApiConfig,
+    config: blocksapi::BlocksApiConfig,
     client: Client,
     receipts_cache_arc: cache::ReceiptsCacheArc,
     app_config: std::sync::Arc<AppConfig>,
 ) -> anyhow::Result<()> {
-    let (_, stream) = blocksapi_rs::streamer(config);
+    let (_, stream) = blocksapi::streamer(config);
 
     let mut handlers = ReceiverStream::new(stream)
         .map(|message| {
