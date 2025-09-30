@@ -18,7 +18,7 @@ docker compose -f docker-compose.tracing.yml up -d jaeger
 OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318/v1/traces
 OTEL_SERVICE_NAME=near-defuse-indexer
 OTEL_SERVICE_VERSION=0.2.0
-RUST_LOG=near_defuse_indexer=debug,near_lake_framework=info
+RUST_LOG=near_defuse_indexer=debug,blocksapi=info
 ```
 
 3. Run the indexer (tracing auto‑initializes when `OTEL_EXPORTER_OTLP_ENDPOINT` is set):

@@ -87,7 +87,7 @@ pub struct AppConfig {
 
 pub async fn init_tracing_with_otel(config: &AppConfig) -> anyhow::Result<()> {
     let rust_log = std::env::var("RUST_LOG")
-        .unwrap_or_else(|_| "near_defuse_indexer=info,near_lake_framework=info".to_string());
+        .unwrap_or_else(|_| "near_defuse_indexer=info,blocksapi=info".to_string());
     let env_filter = tracing_subscriber::EnvFilter::new(rust_log);
 
     if let Some(otlp_endpoint) = &config.otel_endpoint {

@@ -36,8 +36,8 @@ The indexer is configured via environment variables. The table below lists the m
 | `BLOCK_HEIGHT`          |    No    | Start block height for indexing — if unset the indexer resumes from last saved state |
 | `REDIS_URL`             |    No    | Redis connection URL for caching (optional) |
 | `OUTCOME_CONCURRENCY`   |    No    | Per-outcome parallelism (default: 32) |
-| `BLOCKSAPI_SERVER_ADDR` |    No    | Blocks API server address |
-| `BLOCKSAPI_TOKEN`       |    No    | Blocks API access token |
+| `BLOCKSAPI_SERVER_ADDR` |    Yes   | Blocks API server address |
+| `BLOCKSAPI_TOKEN`       |    Yes   | Blocks API access token |
 
 Quick examples:
 
@@ -121,7 +121,7 @@ docker-compose -f docker-compose.tracing.yml up jaeger -d
 # Add to your .env file:
 OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318/v1/traces
 OTEL_SERVICE_NAME=near-defuse-indexer
-RUST_LOG=near_defuse_indexer=debug,near_lake_framework=info
+RUST_LOG=near_defuse_indexer=debug,blocksapi=info
 
 # Run the indexer
 cargo run --release
