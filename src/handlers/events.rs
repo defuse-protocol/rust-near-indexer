@@ -196,6 +196,10 @@ async fn parse_event(
     }
 
     let Some(tx_hash) = tx_hash else {
+        tracing::warn!(
+            "Could not resolve parent tx hash for receipt_id: {}",
+            outcome.receipt.receipt_id
+        );
         return Ok(None);
     };
 

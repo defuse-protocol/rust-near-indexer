@@ -184,7 +184,7 @@ async fn collect_outcomes_and_receipts(
                 child_receipts = outcome.execution_outcome.outcome.receipt_ids.len()
             );
             async {
-                // cache lookup
+                // Looking for parent transaction hash in main cache
                 let mut parent_tx_opt = match receipts_cache_arc
                     .get(&types::ReceiptOrDataId::ReceiptId(receipt_id))
                     .await
@@ -195,26 +195,35 @@ async fn collect_outcomes_and_receipts(
                         None
                     }
                 };
+
+                // If we haven't found the parent transaction hash in the main cache,
+                // we try the potential cache and promote it to main if the outcome/receipt
+                // is relevant (touches accounts of interest)
                 if parent_tx_opt.is_none()
-                    && super::any_account_id_of_interest(&[
-                        outcome.receipt.receiver_id.as_str(),
-                        outcome.receipt.predecessor_id.as_str(),
-                    ])
                 {
                     match receipts_cache_arc
                         .potential_get(&types::ReceiptOrDataId::ReceiptId(receipt_id))
                         .await
                     {
                         Ok(Some(p)) => {
-                            receipts_cache_arc
-                                .set(types::ReceiptOrDataId::ReceiptId(receipt_id), p.clone())
-                                .await;
                             parent_tx_opt = Some(p.clone());
-                            crate::metrics::PROMOTIONS_TOTAL
-                                .with_label_values(&["execution_outcomes"])
-                                .inc();
+
+                            // Promotion condition: outcome/receipt touches accounts of interest
+                            if super::any_account_id_of_interest(&[
+                                outcome.receipt.receiver_id.as_str(),
+                                outcome.receipt.predecessor_id.as_str(),
+                            ]) {
+                                receipts_cache_arc
+                                    .set(types::ReceiptOrDataId::ReceiptId(receipt_id), p.clone())
+                                    .await;
+                                crate::metrics::PROMOTIONS_TOTAL
+                                    .with_label_values(&["execution_outcomes"])
+                                    .inc();
+                            }
                         }
                         Ok(None) => {
+                            // This means we had messed up the potential cache population logic
+                            // around the handling of the execution outcomes.outcome.receiptd_ids.
                             crate::metrics::POTENTIAL_ASSET_MISS_TOTAL
                                 .with_label_values(&["execution_outcomes"])
                                 .inc();
@@ -224,84 +233,110 @@ async fn collect_outcomes_and_receipts(
                         }
                     }
                 }
+
+                // If we have resolved the parent tx hash, build both outcome and receipt rows
                 if let Some(parent_tx_hash) = parent_tx_opt {
-                    let logs_json = {
-                        let logs = &outcome.execution_outcome.outcome.logs;
-                        if logs.is_empty() {
-                            "[]".to_string()
-                        } else {
-                            serde_json::to_string(logs).unwrap_or_else(|e| {
-                                tracing::error!(error=%e, "Failed to serialize logs");
+                    if super::any_account_id_of_interest(&[
+                        outcome.receipt.receiver_id.as_str(),
+                        outcome.receipt.predecessor_id.as_str(),
+                    ]) {
+                        let logs_json = {
+                            let logs = &outcome.execution_outcome.outcome.logs;
+                            if logs.is_empty() {
                                 "[]".to_string()
-                            })
-                        }
-                    };
-                    let receipt_ids: Vec<String> = outcome
-                        .execution_outcome
-                        .outcome
-                        .receipt_ids
-                        .iter()
-                        .map(|id| id.to_string())
-                        .collect();
-                    let outcome_row = types::ExecutionOutcomeRow {
-                        block_height,
-                        block_timestamp,
-                        block_hash: block_hash_clone.clone(),
-                        execution_outcome_id: outcome.execution_outcome.id.to_string(),
-                        parent_transaction_hash: parent_tx_hash.clone(),
-                        executor_id: outcome.execution_outcome.outcome.executor_id.to_string(),
-                        status: parse_status(outcome.execution_outcome.outcome.status.clone()),
-                        logs: logs_json,
-                        tokens_burnt: outcome.execution_outcome.outcome.tokens_burnt.to_string(),
-                        gas_burnt: outcome.execution_outcome.outcome.gas_burnt,
-                        receipt_ids,
-                    };
-                    let child_ids: Vec<types::ReceiptOrDataId> = outcome
-                        .execution_outcome
-                        .outcome
-                        .receipt_ids
-                        .iter()
-                        .map(|c| types::ReceiptOrDataId::ReceiptId(*c))
-                        .collect();
-                    receipts_cache_arc
-                        .set_many_receipts(child_ids, &parent_tx_hash)
-                        .await;
-                    // Receipt row
-                    let r_view = &outcome.receipt;
-                    let actions_json = match r_view.receipt {
-                        near_primitives::views::ReceiptEnumView::Action { ref actions, .. } => {
-                            serde_json::to_string(
-                                &actions
-                                    .iter()
-                                    .flat_map(types::Action::try_from)
-                                    .collect::<Vec<types::Action>>(),
-                            )
-                            .unwrap_or_else(|e| {
-                                tracing::error!("Failed to serialize actions for receipt: {}", e);
-                                "[]".to_string()
-                            })
-                        }
-                        near_primitives::views::ReceiptEnumView::Data { ref data, .. } => {
-                            serde_json::to_string(data).unwrap_or_else(|e| {
-                                tracing::warn!("Failed to serialize receipt data: {}", e);
-                                "null".to_string()
-                            })
-                        }
-                        near_primitives::views::ReceiptEnumView::GlobalContractDistribution { .. } => {
-                            "".to_string()
-                        }
-                    };
-                    let receipt_row = types::ReceiptRow {
-                        block_height,
-                        block_timestamp,
-                        block_hash: block_hash_clone.clone(),
-                        parent_transaction_hash: parent_tx_hash,
-                        receipt_id: r_view.receipt_id.to_string(),
-                        receiver_id: r_view.receiver_id.to_string(),
-                        predecessor_id: r_view.predecessor_id.to_string(),
-                        actions: actions_json,
-                    };
-                    Some((outcome_row, receipt_row))
+                            } else {
+                                serde_json::to_string(logs).unwrap_or_else(|e| {
+                                    tracing::error!(error=%e, "Failed to serialize logs");
+                                    "[]".to_string()
+                                })
+                            }
+                        };
+                        let receipt_ids: Vec<String> = outcome
+                            .execution_outcome
+                            .outcome
+                            .receipt_ids
+                            .iter()
+                            .map(|id| id.to_string())
+                            .collect();
+                        let outcome_row = types::ExecutionOutcomeRow {
+                            block_height,
+                            block_timestamp,
+                            block_hash: block_hash_clone.clone(),
+                            execution_outcome_id: outcome.execution_outcome.id.to_string(),
+                            parent_transaction_hash: parent_tx_hash.clone(),
+                            executor_id: outcome.execution_outcome.outcome.executor_id.to_string(),
+                            status: parse_status(outcome.execution_outcome.outcome.status.clone()),
+                            logs: logs_json,
+                            tokens_burnt: outcome.execution_outcome.outcome.tokens_burnt.to_string(),
+                            gas_burnt: outcome.execution_outcome.outcome.gas_burnt,
+                            receipt_ids,
+                        };
+
+                        // Now we collect the receipts that are created by this ExecutionOutcome
+                        // And we need to map in the potential cache to the same parent tx hash as this ExecutionOutcome
+                        let child_ids: Vec<types::ReceiptOrDataId> = outcome
+                            .execution_outcome
+                            .outcome
+                            .receipt_ids
+                            .iter()
+                            .map(|c| types::ReceiptOrDataId::ReceiptId(*c))
+                            .collect();
+                        receipts_cache_arc
+                            .set_many_receipts(child_ids, &parent_tx_hash)
+                            .await;
+
+                        // Receipt row
+                        let r_view = &outcome.receipt;
+                        let actions_json = match r_view.receipt {
+                            near_primitives::views::ReceiptEnumView::Action { ref actions, .. } => {
+                                serde_json::to_string(
+                                    &actions
+                                        .iter()
+                                        .flat_map(types::Action::try_from)
+                                        .collect::<Vec<types::Action>>(),
+                                )
+                                .unwrap_or_else(|e| {
+                                    tracing::error!("Failed to serialize actions for receipt: {}", e);
+                                    "[]".to_string()
+                                })
+                            }
+                            near_primitives::views::ReceiptEnumView::Data { ref data, .. } => {
+                                serde_json::to_string(data).unwrap_or_else(|e| {
+                                    tracing::warn!("Failed to serialize receipt data: {}", e);
+                                    "null".to_string()
+                                })
+                            }
+                            near_primitives::views::ReceiptEnumView::GlobalContractDistribution { .. } => {
+                                "".to_string()
+                            }
+                        };
+                        let receipt_row = types::ReceiptRow {
+                            block_height,
+                            block_timestamp,
+                            block_hash: block_hash_clone.clone(),
+                            parent_transaction_hash: parent_tx_hash,
+                            receipt_id: r_view.receipt_id.to_string(),
+                            receiver_id: r_view.receiver_id.to_string(),
+                            predecessor_id: r_view.predecessor_id.to_string(),
+                            actions: actions_json,
+                        };
+                        Some((outcome_row, receipt_row))
+                    } else {
+                        // And we're here it means this outcome/receipt is irrelevant
+                        // We need to collect the receipt ids produces by this outcome to the potential cache
+                        let child_ids: Vec<types::ReceiptOrDataId> = outcome
+                            .execution_outcome
+                            .outcome
+                            .receipt_ids
+                            .iter()
+                            .map(|c| types::ReceiptOrDataId::ReceiptId(*c))
+                            .collect();
+
+                        receipts_cache_arc
+                            .set_many_potentials(child_ids, &parent_tx_hash)
+                            .await;
+                        None
+                    }
                 } else {
                     None
                 }

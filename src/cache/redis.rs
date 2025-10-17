@@ -103,6 +103,26 @@ impl RedisReceiptCache {
         keys: Vec<ReceiptOrDataId>,
         value: &ParentTransactionHashString,
     ) {
+        self.internal_set_many_receipts(keys, value, Self::key_receipt)
+            .await;
+    }
+
+    // Batches multiple SETEX calls into a single pipeline (potential)
+    pub async fn set_many_potentials(
+        &self,
+        keys: Vec<ReceiptOrDataId>,
+        value: &ParentTransactionHashString,
+    ) {
+        self.internal_set_many_receipts(keys, value, Self::key_potential)
+            .await;
+    }
+
+    async fn internal_set_many_receipts(
+        &self,
+        keys: Vec<ReceiptOrDataId>,
+        value: &ParentTransactionHashString,
+        key_fn: fn(&ReceiptOrDataId) -> String,
+    ) {
         if keys.is_empty() {
             return;
         }
@@ -110,7 +130,7 @@ impl RedisReceiptCache {
         let mut conn = self.manager.clone();
         let mut pipe = redis::pipe();
         for k in keys {
-            let redis_key = Self::key_receipt(&k);
+            let redis_key = key_fn(&k);
             // Use modern SET with EX instead of legacy SETEX
             pipe.cmd("SET")
                 .arg(&redis_key)
