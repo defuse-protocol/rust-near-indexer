@@ -10,6 +10,15 @@ pub enum ReceiptOrDataId {
     // We don't store data now, but maybe we'll be in the future
     _DataId(near_indexer_primitives::CryptoHash),
 }
+
+impl std::fmt::Display for ReceiptOrDataId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ReceiptOrDataId::ReceiptId(hash) => write!(f, "{}", hash),
+            ReceiptOrDataId::_DataId(hash) => write!(f, "{}", hash),
+        }
+    }
+}
 // Creating type aliases to make HashMap types for cache more explicit
 pub type ParentTransactionHashString = String;
 
