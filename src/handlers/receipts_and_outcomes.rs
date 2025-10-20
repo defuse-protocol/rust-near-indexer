@@ -286,7 +286,7 @@ async fn process_single_outcome(
                         serde_json::to_string(
                             &actions
                                 .iter()
-                                .flat_map(types::Action::try_from)
+                                .filter_map(|a| types::Action::try_from(a).ok())
                                 .collect::<Vec<types::Action>>(),
                         )
                         .unwrap_or_else(|err| {
@@ -393,7 +393,7 @@ async fn find_parent_tx_hash(
             }
             Ok(None) => {
                 // This means we had messed up the potential cache population logic
-                // around the handling of the execution outcomes.outcome.receiptd_ids.
+                // around the handling of the execution outcomes.outcome.receipt_ids.
                 crate::metrics::POTENTIAL_ASSET_MISS_TOTAL
                     .with_label_values(&["execution_outcomes"])
                     .inc();

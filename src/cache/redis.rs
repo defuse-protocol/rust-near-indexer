@@ -100,7 +100,13 @@ impl RedisReceiptCache {
             .await;
         match res {
             Ok(v) => {
-                tracing::trace!(op="potential_get", key=%redis_key, hit=v.is_some(), ms=%start.elapsed().as_millis());
+                tracing::trace!(
+                    target: crate::config::INDEXER,
+                    op="potential_get",
+                    key=%redis_key,
+                    hit=v.is_some(),
+                    ms=%start.elapsed().as_millis()
+                );
                 Ok(v)
             }
             Err(err) => {
