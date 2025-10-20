@@ -60,7 +60,11 @@ async fn handle_streamer_message(
 ) -> anyhow::Result<()> {
     let start = Instant::now();
     crate::metrics::LATEST_BLOCK_HEIGHT.set(message.block.header.height as i64);
-    tracing::info!("Block: {}", message.block.header.height);
+    tracing::info!(
+        target: crate::config::INDEXER,
+        "Block: {}",
+        message.block.header.height
+    );
 
     // We always process transactions first to populate the cache
     // with mappings from Receipt IDs to their parent Transaction hashes.
@@ -86,6 +90,7 @@ async fn handle_streamer_message(
     crate::metrics::BLOCK_PROCESSED_TOTAL.inc();
     let duration = start.elapsed();
     tracing::info!(
+        target: crate::config::INDEXER,
         duration_ms = duration.as_millis(),
         "handle_streamer_message completed"
     );

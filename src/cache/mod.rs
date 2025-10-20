@@ -10,6 +10,9 @@ pub async fn init_cache(app_config: &crate::config::AppConfig) -> anyhow::Result
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("REDIS_URL must be set (local cache deprecated)"))?;
     let cache = redis::RedisReceiptCache::new(redis_url, app_config.redis_ttl_seconds).await?;
-    tracing::info!("Initialized Redis receipt cache (redis-only mode, ping ok)");
+    tracing::info!(
+        target: crate::config::INDEXER,
+        "Initialized Redis receipt cache (redis-only mode, ping ok)"
+    );
     Ok(Arc::new(cache))
 }

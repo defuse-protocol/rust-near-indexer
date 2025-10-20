@@ -52,7 +52,11 @@ pub async fn handle_transactions(
             Ok((_res_transactions, _res_execution_outcomes)) => Ok(()),
             Err(err) => {
                 crate::metrics::STORE_ERRORS_TOTAL.inc();
-                tracing::error!("Error during try_join for database inserts: {}", err);
+                tracing::error!(
+                    target: crate::config::INDEXER,
+                    "Error during try_join for database inserts: {}",
+                    err
+                );
                 anyhow::bail!(
                     "Failed to insert transactions or execution outcomes into Clickhouse: {}",
                     err
@@ -61,7 +65,10 @@ pub async fn handle_transactions(
         }
     };
 
-    tracing::debug!("handle_transactions completed");
+    tracing::debug!(
+        target: crate::config::INDEXER,
+        "handle_transactions completed"
+    );
     result
 }
 
@@ -108,7 +115,10 @@ async fn extract_transactions(
     crate::metrics::ASSETS_IN_BLOCK_CAPTURED_TOTAL
         .with_label_values(&["transactions"])
         .set(transactions.len() as i64);
-    tracing::debug!("extract_transactions done");
+    tracing::debug!(
+        target: crate::config::INDEXER,
+        "extract_transactions done"
+    );
     Ok(transactions)
 }
 
@@ -167,6 +177,7 @@ async fn parse_transactions(
         // so that if we see a receipt related to an account of interest
         // we can still find the parent transaction hash
         tracing::debug!(
+            target: crate::config::INDEXER,
             "Add receipt to potential cache: {}",
             converted_into_receipt_id,
         );
@@ -209,7 +220,10 @@ async fn extract_transaction_execution_outcomes(
             .into_iter()
             .flatten()
             .collect();
-    tracing::debug!("extract_transaction_execution_outcomes done");
+    tracing::debug!(
+        target: crate::config::INDEXER,
+        "extract_transaction_execution_outcomes done"
+    );
     Ok(execution_outcomes)
 }
 
