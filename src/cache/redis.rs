@@ -41,12 +41,13 @@ impl RedisReceiptCache {
             .await;
         match res {
             Ok(v) => {
-                tracing::trace!(
+                tracing::debug!(
                     target: crate::config::INDEXER,
                     op="get",
                     key=%redis_key,
                     hit=v.is_some(),
-                    ms=%start.elapsed().as_millis()
+                    ms=%start.elapsed().as_millis(),
+                    "redis get succeeded"
                 );
                 Ok(v)
             }
@@ -79,11 +80,12 @@ impl RedisReceiptCache {
                 "redis set failed"
             );
         } else {
-            tracing::trace!(
+            tracing::debug!(
                 target: crate::config::INDEXER,
                 op="set",
                 key=%redis_key,
-                ms=%start.elapsed().as_millis()
+                ms=%start.elapsed().as_millis(),
+                "redis set succeeded"
             );
         }
     }
@@ -100,12 +102,13 @@ impl RedisReceiptCache {
             .await;
         match res {
             Ok(v) => {
-                tracing::trace!(
+                tracing::debug!(
                     target: crate::config::INDEXER,
                     op="potential_get",
                     key=%redis_key,
                     hit=v.is_some(),
-                    ms=%start.elapsed().as_millis()
+                    ms=%start.elapsed().as_millis(),
+                    "redis potential_get succeeded"
                 );
                 Ok(v)
             }
@@ -114,7 +117,8 @@ impl RedisReceiptCache {
                     target: crate::config::INDEXER,
                     op="potential_get",
                     key=%redis_key,
-                    error=%err
+                    error=%err,
+                    "redis potential_get failed"
                 );
                 Err(err.into())
             }
@@ -132,7 +136,8 @@ impl RedisReceiptCache {
                 target: crate::config::INDEXER,
                 op="potential_set",
                 key=%redis_key,
-                error=%err
+                error=%err,
+                "redis potential_set failed"
             );
         }
     }
@@ -187,7 +192,7 @@ impl RedisReceiptCache {
                 "redis pipeline failed"
             );
         } else {
-            tracing::trace!(
+            tracing::debug!(
                 target: crate::config::INDEXER,
                 op="set_many",
                 count=%count,
