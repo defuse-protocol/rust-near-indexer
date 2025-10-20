@@ -87,23 +87,33 @@ async fn get_metrics() -> impl Responder {
     let encoder = prometheus::TextEncoder::new();
     let metric_families = prometheus::gather();
     let mut buffer = Vec::new();
-    if let Err(e) = encoder.encode(&metric_families, &mut buffer) {
-        tracing::error!("could not encode metrics: {}", e);
+    if let Err(err) = encoder.encode(&metric_families, &mut buffer) {
+        tracing::error!(
+            target: crate::config::INDEXER,
+            "could not encode metrics: {}",
+            err
+        );
         return HttpResponse::InternalServerError().finish();
     }
     match String::from_utf8(buffer) {
         Ok(v) => HttpResponse::Ok()
             .content_type(encoder.format_type())
             .body(v),
-        Err(e) => {
-            tracing::error!("metrics could not be from_utf8'd: {}", e);
+        Err(err) => {
+            tracing::error!(
+                target: crate::config::INDEXER,
+                "metrics could not be from_utf8'd: {}", err
+            );
             HttpResponse::InternalServerError().finish()
         }
     }
 }
 
 pub(crate) fn init_server(port: u16) -> anyhow::Result<actix_web::dev::Server> {
-    tracing::info!("Starting metrics server on http://0.0.0.0:{port}/metrics (no auth)");
+    tracing::info!(
+        target: crate::config::INDEXER,
+        "Starting metrics server on http://0.0.0.0:{port}/metrics (no auth)"
+    );
     let server = HttpServer::new(|| App::new().service(get_metrics))
         .bind(("0.0.0.0", port))?
         .disable_signals()
@@ -117,7 +127,10 @@ pub(crate) fn init_server_with_basic_auth(
     port: u16,
     basic_auth: (String, String),
 ) -> anyhow::Result<actix_web::dev::Server> {
-    tracing::info!("Starting metrics server on http://0.0.0.0:{port}/metrics (with basic auth)");
+    tracing::info!(
+        target: crate::config::INDEXER,
+        "Starting metrics server on http://0.0.0.0:{port}/metrics (with basic auth)"
+    );
 
     async fn basic_auth_validator(
         req: ServiceRequest,

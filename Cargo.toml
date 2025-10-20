@@ -20,7 +20,6 @@ dotenv = "0.15.0"
 itertools = "0.10.3"
 lazy_static = "1.4.0"
 lru = "0.16.0"
-near-lake-framework = "0.7.13"
 once_cell = "1.8.0"
 prometheus = "0.13.1"
 redis = { version = "0.32", features = [
@@ -38,7 +37,8 @@ tokio = { version = "1.47.1", features = [
     "rt-multi-thread",
     "macros",
 ] }
-tokio-stream = { version = "0.1" }
+tokio-retry = "0.3"
+tokio-stream = "0.1"
 tracing = "0.1.13"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-opentelemetry = "0.20.0"
@@ -49,3 +49,5 @@ opentelemetry-otlp = { version = "0.13.0", features = [
     "reqwest-client",
 ] }
 opentelemetry-semantic-conventions = "0.12.0"
+
+blocksapi = { git = "https://github.com/defuse-protocol/blocksapi-rs.git", rev = "c041fa5d4e8e3f38e5a4be26c6eda5382fac46d1" }

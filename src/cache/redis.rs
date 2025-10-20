@@ -41,12 +41,25 @@ impl RedisReceiptCache {
             .await;
         match res {
             Ok(v) => {
-                tracing::trace!(op="get", key=%redis_key, hit=v.is_some(), ms=%start.elapsed().as_millis());
+                tracing::debug!(
+                    target: crate::config::INDEXER,
+                    op="get",
+                    key=%redis_key,
+                    hit=v.is_some(),
+                    ms=%start.elapsed().as_millis(),
+                    "redis get succeeded"
+                );
                 Ok(v)
             }
-            Err(e) => {
-                tracing::warn!(op="get", key=%redis_key, error=%e, "redis error");
-                Err(e.into())
+            Err(err) => {
+                tracing::warn!(
+                    target: crate::config::INDEXER,
+                    op="get",
+                    key=%redis_key,
+                    error=%err,
+                    "redis error"
+                );
+                Err(err.into())
             }
         }
     }
@@ -55,13 +68,25 @@ impl RedisReceiptCache {
         let redis_key = Self::key_receipt(&key);
         let start = std::time::Instant::now();
         let mut conn = self.manager.clone();
-        if let Err(e) = conn
+        if let Err(err) = conn
             .set_ex::<_, _, ()>(redis_key.clone(), value, self.ttl_seconds)
             .await
         {
-            tracing::warn!(op="set", key=%redis_key, error=%e, "redis set failed");
+            tracing::warn!(
+                target: crate::config::INDEXER,
+                op="set",
+                key=%redis_key,
+                error=%err,
+                "redis set failed"
+            );
         } else {
-            tracing::trace!(op="set", key=%redis_key, ms=%start.elapsed().as_millis());
+            tracing::debug!(
+                target: crate::config::INDEXER,
+                op="set",
+                key=%redis_key,
+                ms=%start.elapsed().as_millis(),
+                "redis set succeeded"
+            );
         }
     }
 
@@ -77,12 +102,25 @@ impl RedisReceiptCache {
             .await;
         match res {
             Ok(v) => {
-                tracing::trace!(op="potential_get", key=%redis_key, hit=v.is_some(), ms=%start.elapsed().as_millis());
+                tracing::debug!(
+                    target: crate::config::INDEXER,
+                    op="potential_get",
+                    key=%redis_key,
+                    hit=v.is_some(),
+                    ms=%start.elapsed().as_millis(),
+                    "redis potential_get succeeded"
+                );
                 Ok(v)
             }
-            Err(e) => {
-                tracing::warn!(op="potential_get", key=%redis_key, error=%e);
-                Err(e.into())
+            Err(err) => {
+                tracing::warn!(
+                    target: crate::config::INDEXER,
+                    op="potential_get",
+                    key=%redis_key,
+                    error=%err,
+                    "redis potential_get failed"
+                );
+                Err(err.into())
             }
         }
     }
@@ -90,11 +128,17 @@ impl RedisReceiptCache {
     pub async fn potential_set(&self, key: ReceiptOrDataId, value: ParentTransactionHashString) {
         let redis_key = Self::key_potential(&key);
         let mut conn = self.manager.clone();
-        if let Err(e) = conn
+        if let Err(err) = conn
             .set_ex::<_, _, ()>(redis_key.clone(), value, self.ttl_seconds)
             .await
         {
-            tracing::warn!(op="potential_set", key=%redis_key, error=%e);
+            tracing::warn!(
+                target: crate::config::INDEXER,
+                op="potential_set",
+                key=%redis_key,
+                error=%err,
+                "redis potential_set failed"
+            );
         }
     }
     // Batches multiple SETEX calls into a single pipeline.
@@ -103,6 +147,26 @@ impl RedisReceiptCache {
         keys: Vec<ReceiptOrDataId>,
         value: &ParentTransactionHashString,
     ) {
+        self.internal_set_many_receipts(keys, value, Self::key_receipt)
+            .await;
+    }
+
+    // Batches multiple SETEX calls into a single pipeline (potential)
+    pub async fn set_many_potentials(
+        &self,
+        keys: Vec<ReceiptOrDataId>,
+        value: &ParentTransactionHashString,
+    ) {
+        self.internal_set_many_receipts(keys, value, Self::key_potential)
+            .await;
+    }
+
+    async fn internal_set_many_receipts(
+        &self,
+        keys: Vec<ReceiptOrDataId>,
+        value: &ParentTransactionHashString,
+        key_fn: fn(&ReceiptOrDataId) -> String,
+    ) {
         if keys.is_empty() {
             return;
         }
@@ -110,7 +174,7 @@ impl RedisReceiptCache {
         let mut conn = self.manager.clone();
         let mut pipe = redis::pipe();
         for k in keys {
-            let redis_key = Self::key_receipt(&k);
+            let redis_key = key_fn(&k);
             // Use modern SET with EX instead of legacy SETEX
             pipe.cmd("SET")
                 .arg(&redis_key)
@@ -120,10 +184,20 @@ impl RedisReceiptCache {
         }
         // Explicit type annotation for pipeline result
         let res: redis::RedisResult<()> = pipe.query_async(&mut conn).await;
-        if let Err(e) = res {
-            tracing::warn!(op="set_many", error=%e, "redis pipeline failed");
+        if let Err(err) = res {
+            tracing::warn!(
+                target: crate::config::INDEXER,
+                op="set_many",
+                error=%err,
+                "redis pipeline failed"
+            );
         } else {
-            tracing::trace!(op="set_many", count=%count, "batched receipt mappings written");
+            tracing::debug!(
+                target: crate::config::INDEXER,
+                op="set_many",
+                count=%count,
+                "batched receipt mappings written"
+            );
         }
     }
 }

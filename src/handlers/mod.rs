@@ -4,7 +4,7 @@ use clickhouse::Client;
 use futures::StreamExt;
 use tokio_stream::wrappers::ReceiverStream;
 
-use near_lake_framework::near_indexer_primitives::StreamerMessage;
+use blocksapi::near_indexer_primitives::StreamerMessage;
 
 use crate::cache;
 use crate::config::AppConfig;
@@ -19,13 +19,13 @@ pub(crate) fn any_account_id_of_interest(account_ids: &[&str]) -> bool {
         .any(|id| crate::CONTRACT_ACCOUNT_IDS_OF_INTEREST.contains(id))
 }
 
-pub async fn handle_stream<T: Into<near_lake_framework::providers::NearLakeFrameworkConfig>>(
-    config: T,
+pub async fn handle_stream(
+    config: blocksapi::BlocksApiConfig,
     client: Client,
     receipts_cache_arc: cache::ReceiptsCacheArc,
     app_config: std::sync::Arc<AppConfig>,
 ) -> anyhow::Result<()> {
-    let (_, stream) = near_lake_framework::streamer(config.into());
+    let (_, stream) = blocksapi::streamer(config);
 
     let mut handlers = ReceiverStream::new(stream)
         .map(|message| {
@@ -60,7 +60,11 @@ async fn handle_streamer_message(
 ) -> anyhow::Result<()> {
     let start = Instant::now();
     crate::metrics::LATEST_BLOCK_HEIGHT.set(message.block.header.height as i64);
-    tracing::info!("Block: {}", message.block.header.height);
+    tracing::info!(
+        target: crate::config::INDEXER,
+        "Block: {}",
+        message.block.header.height
+    );
 
     // We always process transactions first to populate the cache
     // with mappings from Receipt IDs to their parent Transaction hashes.
@@ -86,6 +90,7 @@ async fn handle_streamer_message(
     crate::metrics::BLOCK_PROCESSED_TOTAL.inc();
     let duration = start.elapsed();
     tracing::info!(
+        target: crate::config::INDEXER,
         duration_ms = duration.as_millis(),
         "handle_streamer_message completed"
     );

@@ -1,6 +1,6 @@
 # NEAR Defuse Custom Indexer
 
-This project is a Rust-based indexer that processes blockchain events from NEAR Protocol and inserts them into a Clickhouse database for efficient querying. It uses [NEAR Lake Framework](https://github.com/near/near-lake-framework) for streaming blockchain data and stores structured events in a Clickhouse database.
+This project is a Rust-based indexer that processes blockchain events from NEAR Protocol and inserts them into a Clickhouse database for efficient querying. It uses [blocksapi-rs](https://github.com/defuse-protocol/blocksapi-rs) for streaming blockchain data and stores structured events in a Clickhouse database.
 
 ## Features
 
@@ -34,10 +34,10 @@ The indexer is configured via environment variables. The table below lists the m
 | `CLICKHOUSE_PASSWORD`   |    Yes   | Clickhouse password |
 | `CLICKHOUSE_DATABASE`   |    Yes   | Clickhouse database name (default: `mainnet`) |
 | `BLOCK_HEIGHT`          |    No    | Start block height for indexing — if unset the indexer resumes from last saved state |
-| `AWS_ACCESS_KEY_ID`     |    No    | Required only when using AWS S3/Lake storage for NEAR lake input |
-| `AWS_SECRET_ACCESS_KEY` |    No    | Required only when using AWS S3/Lake storage for NEAR lake input |
 | `REDIS_URL`             |    No    | Redis connection URL for caching (optional) |
 | `OUTCOME_CONCURRENCY`   |    No    | Per-outcome parallelism (default: 32) |
+| `BLOCKSAPI_SERVER_ADDR` |    Yes   | Blocks API server address |
+| `BLOCKSAPI_TOKEN`       |    Yes   | Blocks API access token |
 
 Quick examples:
 
@@ -49,8 +49,8 @@ CLICKHOUSE_URL="http://localhost:18123"
 CLICKHOUSE_DATABASE="mainnet"
 CLICKHOUSE_USER="clickhouse"
 CLICKHOUSE_PASSWORD="secret"
-AWS_ACCESS_KEY_ID="your_aws_access_key_id"
-AWS_SECRET_ACCESS_KEY="your_aws_secret_access_key"
+BLOCKSAPI_SERVER_ADDR="http://localhost:4300"
+BLOCKSAPI_TOKEN="blocksapi_access_token"
 # optional:
 # REDIS_URL="redis://127.0.0.1:6379"
 # BLOCK_HEIGHT="130636886"
@@ -121,7 +121,7 @@ docker-compose -f docker-compose.tracing.yml up jaeger -d
 # Add to your .env file:
 OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318/v1/traces
 OTEL_SERVICE_NAME=near-defuse-indexer
-RUST_LOG=near_defuse_indexer=debug,near_lake_framework=info
+RUST_LOG=near_defuse_indexer=debug,blocksapi=info
 
 # Run the indexer
 cargo run --release
@@ -408,6 +408,8 @@ CREATE TABLE silver_dip4_public_keys (
 PRIMARY KEY (block_height, related_receipt_id, account_id)
 ORDER BY (block_height, related_receipt_id, account_id)
 SETTINGS index_granularity = 8192;
+
+
 CREATE MATERIALIZED VIEW mv_silver_dip4_public_keys TO silver_dip4_public_keys (
     block_height                UInt64,
     block_timestamp             DateTime64(9, 'UTC'),
@@ -455,6 +457,8 @@ CREATE TABLE silver_dip4_intents_executed (
 PRIMARY KEY (block_height, related_receipt_id, intent_hash)
 ORDER BY (block_height, related_receipt_id, intent_hash)
 SETTINGS index_granularity = 8192;
+
+
 CREATE MATERIALIZED VIEW mv_silver_dip4_intents_executed TO silver_dip4_intents_executed (
     block_height                UInt64,
     block_timestamp             DateTime64(9, 'UTC'),

@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use near_lake_framework::near_indexer_primitives;
+use blocksapi::near_indexer_primitives;
 
 use crate::CONTRACT_ACCOUNT_IDS_OF_INTEREST;
 use crate::cache;
@@ -74,10 +74,14 @@ pub async fn handle_events(
                     Ok(acc)
                 }
                 Ok(None) => Ok(acc),
-                Err(e) => {
+                Err(err) => {
                     crate::metrics::STORE_ERRORS_TOTAL.inc();
-                    tracing::error!(error = %e, "Failed parsing event row");
-                    Err(e)
+                    tracing::error!(
+                        target: crate::config::INDEXER,
+                        error = %err,
+                        "Failed parsing event row"
+                    );
+                    Err(err)
                 }
             })?;
 
@@ -87,13 +91,18 @@ pub async fn handle_events(
         if let Err(err) = crate::database::insert_rows(client, EVENT_CLICKHOUSE_TABLE, &rows).await
         {
             crate::metrics::STORE_ERRORS_TOTAL.inc();
-            tracing::error!("Error inserting rows into Clickhouse: {}", err);
+            tracing::error!(
+                target: crate::config::INDEXER,
+                "Error inserting rows into Clickhouse: {}",
+                err
+            );
             anyhow::bail!("Failed to insert rows into Clickhouse: {}", err)
         }
     }
 
     let duration = start.elapsed();
     tracing::debug!(
+        target: crate::config::INDEXER,
         duration_ms = duration.as_millis(),
         "handle_events completed"
     );
@@ -135,8 +144,12 @@ async fn parse_event(
     // 2. Parse JSON early
     let event: EventJson = match serde_json::from_str::<EventJson>(low_stripped) {
         Ok(ev) => ev,
-        Err(e) => {
-            tracing::warn!(error = %e, "Failed to deserialize event JSON, skipping");
+        Err(err) => {
+            tracing::warn!(
+                target: crate::config::INDEXER,
+                error = %err,
+                "Failed to deserialize event JSON, skipping"
+            );
             return Ok(None);
         }
     };
@@ -154,8 +167,13 @@ async fn parse_event(
         .await
     {
         Ok(v) => v,
-        Err(e) => {
-            tracing::debug!(receipt_id=%outcome.receipt.receipt_id, error=%e, "redis get failed for event (tx_hash omitted)");
+        Err(err) => {
+            tracing::debug!(
+                target: crate::config::INDEXER,
+                receipt_id=%outcome.receipt.receipt_id,
+                error=%err,
+                "redis get failed for event (tx_hash omitted)"
+            );
             None
         }
     };
@@ -189,13 +207,23 @@ async fn parse_event(
                     .with_label_values(&["events"])
                     .inc();
             }
-            Err(e) => {
-                tracing::debug!(receipt_id=%outcome.receipt.receipt_id, error=%e, "redis potential_get failed for event");
+            Err(err) => {
+                tracing::debug!(
+                    target: crate::config::INDEXER,
+                    receipt_id=%outcome.receipt.receipt_id,
+                    error=%err,
+                    "redis potential_get failed for event"
+                );
             }
         }
     }
 
     let Some(tx_hash) = tx_hash else {
+        tracing::warn!(
+            target: crate::config::INDEXER,
+            "Could not resolve parent tx hash for receipt_id: {}",
+            outcome.receipt.receipt_id
+        );
         return Ok(None);
     };
 
