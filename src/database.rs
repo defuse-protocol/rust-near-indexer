@@ -13,7 +13,10 @@ pub fn init_clickhouse_client(config: &AppConfig) -> Client {
 }
 
 pub async fn get_last_height(client: &Client) -> Result<u64, clickhouse::error::Error> {
-    tracing::info!("Fetching last indexed block height from ClickHouse...");
+    tracing::info!(
+        target: crate::config::INDEXER,
+        "Fetching last indexed block height from ClickHouse..."
+    );
     client
         .query("SELECT max(block_height) FROM transactions")
         .fetch_one::<u64>()
@@ -33,9 +36,14 @@ pub async fn insert_rows(
 ) -> anyhow::Result<()> {
     let retry_strategy = FixedInterval::from_millis(500).take(SAVE_ATTEMPTS);
     Retry::spawn(retry_strategy, || async {
-        try_insert_rows(client, table, rows).await.map_err(|e| {
-            tracing::warn!("Failed to insert rows into {}: {}", table, e);
-            e
+        try_insert_rows(client, table, rows).await.map_err(|err| {
+            tracing::warn!(
+                target: crate::config::INDEXER,
+                "Failed to insert rows into {}: {}",
+                table,
+                err
+            );
+            err
         })
     })
     .await
@@ -52,7 +60,12 @@ async fn try_insert_rows(
     table: &str,
     rows: &[impl Row + serde::Serialize],
 ) -> anyhow::Result<()> {
-    tracing::debug!("Inserting {} rows into table {}", rows.len(), table);
+    tracing::debug!(
+        target: crate::config::INDEXER,
+        "Inserting {} rows into table {}",
+        rows.len(),
+        table
+    );
     if rows.is_empty() {
         return Ok(());
     }

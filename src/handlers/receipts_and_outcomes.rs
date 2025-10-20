@@ -97,7 +97,7 @@ pub async fn handle_receipts_and_outcomes(
         if execution_outcomes.is_empty() {
             return Ok::<_, anyhow::Error>(());
         }
-        if let Err(e) = crate::database::insert_rows(
+        if let Err(err) = crate::database::insert_rows(
             client,
             EXECUTION_OUTCOMES_CLICKHOUSE_TABLE,
             &execution_outcomes,
@@ -105,8 +105,13 @@ pub async fn handle_receipts_and_outcomes(
         .await
         {
             crate::metrics::STORE_ERRORS_TOTAL.inc();
-            tracing::error!(error=%e, debug=?e, "Failed to insert execution outcomes");
-            return Err(anyhow::anyhow!("execution_outcomes insert failed: {e}"));
+            tracing::error!(
+                target: crate::config::INDEXER,
+                error=%err,
+                debug=?err,
+                "Failed to insert execution outcomes"
+            );
+            return Err(anyhow::anyhow!("execution_outcomes insert failed: {err}"));
         }
         Ok(())
     }
@@ -117,26 +122,38 @@ pub async fn handle_receipts_and_outcomes(
         if receipts.is_empty() {
             return Ok::<_, anyhow::Error>(());
         }
-        if let Err(e) =
+        if let Err(err) =
             crate::database::insert_rows(client, RECEIPTS_CLICKHOUSE_TABLE, &receipts).await
         {
             crate::metrics::STORE_ERRORS_TOTAL.inc();
-            tracing::error!(error=%e, debug=?e, "Failed to insert receipts");
-            return Err(anyhow::anyhow!("receipts insert failed: {e}"));
+            tracing::error!(
+                target: crate::config::INDEXER,
+                error=%err,
+                debug=?err,
+                "Failed to insert receipts"
+            );
+            return Err(anyhow::anyhow!("receipts insert failed: {err}"));
         }
         Ok(())
     }
     .instrument(receipts_span);
 
-    if let Err(e) = (async { tokio::try_join!(exec_task, receipts_task) })
+    if let Err(err) = (async { tokio::try_join!(exec_task, receipts_task) })
         .instrument(insert_span)
         .await
     {
-        tracing::error!(error=%e, "Failed inserting batches");
-        return Err(e);
+        tracing::error!(
+            target: crate::config::INDEXER,
+            error=%err,
+            "Failed inserting batches"
+        );
+        return Err(err);
     }
 
-    tracing::debug!("handle_receipts_and_outcomes completed");
+    tracing::debug!(
+        target: crate::config::INDEXER,
+        "handle_receipts_and_outcomes completed"
+    );
     Ok(())
 }
 
@@ -189,6 +206,7 @@ async fn collect_outcomes_and_receipts(
     }
 
     tracing::debug!(
+        target: crate::config::INDEXER,
         outcomes = outcomes_rows.len(),
         receipts = receipt_rows.len(),
         "collect_outcomes_and_receipts built rows"
@@ -223,8 +241,12 @@ async fn process_single_outcome(
                     if logs.is_empty() {
                         "[]".to_string()
                     } else {
-                        serde_json::to_string(logs).unwrap_or_else(|e| {
-                            tracing::error!(error=%e, "Failed to serialize logs");
+                        serde_json::to_string(logs).unwrap_or_else(|err| {
+                            tracing::error!(
+                                target: crate::config::INDEXER,
+                                error=%err,
+                                "Failed to serialize logs"
+                            );
                             "[]".to_string()
                         })
                     }
@@ -267,14 +289,22 @@ async fn process_single_outcome(
                                 .flat_map(types::Action::try_from)
                                 .collect::<Vec<types::Action>>(),
                         )
-                        .unwrap_or_else(|e| {
-                            tracing::error!("Failed to serialize actions for receipt: {}", e);
+                        .unwrap_or_else(|err| {
+                            tracing::error!(
+                                target: crate::config::INDEXER,
+                                "Failed to serialize actions for receipt: {}",
+                                err
+                            );
                             "[]".to_string()
                         })
                     }
                     near_primitives::views::ReceiptEnumView::Data { ref data, .. } => {
-                        serde_json::to_string(data).unwrap_or_else(|e| {
-                            tracing::warn!("Failed to serialize receipt data: {}", e);
+                        serde_json::to_string(data).unwrap_or_else(|err| {
+                            tracing::warn!(
+                                target: crate::config::INDEXER,
+                                "Failed to serialize receipt data: {}",
+                                err
+                            );
                             "null".to_string()
                         })
                     }
@@ -326,8 +356,13 @@ async fn find_parent_tx_hash(
         .await
     {
         Ok(v) => v,
-        Err(e) => {
-            tracing::warn!(receipt_id=%receipt_id, error=%e, "redis get failed (treating as miss)");
+        Err(err) => {
+            tracing::warn!(
+                target: crate::config::INDEXER,
+                receipt_id=%receipt_id,
+                error=%err,
+                "redis get failed (treating as miss)"
+            );
             None
         }
     };
@@ -363,8 +398,13 @@ async fn find_parent_tx_hash(
                     .with_label_values(&["execution_outcomes"])
                     .inc();
             }
-            Err(e) => {
-                tracing::warn!(receipt_id=%receipt_id, error=%e, "redis potential_get failed (skip miss metric)");
+            Err(err) => {
+                tracing::warn!(
+                    target: crate::config::INDEXER,
+                    receipt_id=%receipt_id,
+                    error=%err,
+                    "redis potential_get failed (skip miss metric)"
+                );
             }
         }
     }

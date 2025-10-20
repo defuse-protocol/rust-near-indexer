@@ -2,6 +2,8 @@ use clap::Parser;
 use opentelemetry_otlp::WithExportConfig;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+pub const INDEXER: &str = "near_defuse_indexer";
+
 /// Application configuration loaded from CLI arguments and environment variables.
 #[derive(Parser, Clone)]
 #[clap(author, version, about)]
@@ -86,12 +88,35 @@ pub struct AppConfig {
 }
 
 pub async fn init_tracing_with_otel(config: &AppConfig) -> anyhow::Result<()> {
-    let rust_log = std::env::var("RUST_LOG")
-        .unwrap_or_else(|_| "near_defuse_indexer=info,blocksapi=info".to_string());
-    let env_filter = tracing_subscriber::EnvFilter::new(rust_log);
+    // Initialize default directives from environment variable RUST_LOG
+    // with a fallback to INFO level for the indexer target
+    let mut env_filter = tracing_subscriber::EnvFilter::new(format!("{}=info,info", INDEXER));
+
+    // Override or add directives from RUST_LOG if set
+    if let Ok(rust_log) = std::env::var("RUST_LOG") {
+        if !rust_log.is_empty() {
+            for directive in rust_log.split(',').filter_map(|s| match s.parse() {
+                Ok(directive) => Some(directive),
+                Err(err) => {
+                    eprintln!("Ignoring directive `{}`: {}", s, err);
+                    None
+                }
+            }) {
+                env_filter = env_filter.add_directive(directive);
+            }
+        }
+    }
+
+    // Ensures all traces are exported and resources cleaned up
+    opentelemetry::global::shutdown_tracer_provider();
+
+    // Configures how trace context propagates across services
+    opentelemetry::global::set_text_map_propagator(
+        opentelemetry::sdk::propagation::TraceContextPropagator::new(),
+    );
 
     if let Some(otlp_endpoint) = &config.otel_endpoint {
-        tracing::info!(
+        eprintln!(
             "Initializing OpenTelemetry tracing with endpoint: {}",
             otlp_endpoint
         );
@@ -125,7 +150,7 @@ pub async fn init_tracing_with_otel(config: &AppConfig) -> anyhow::Result<()> {
             .with(telemetry)
             .init();
     } else {
-        tracing::info!("OpenTelemetry endpoint not configured, using default tracing");
+        eprintln!("OpenTelemetry endpoint not configured, using default tracing");
         tracing_subscriber::registry()
             .with(env_filter)
             .with(tracing_subscriber::fmt::layer())

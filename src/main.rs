@@ -35,13 +35,21 @@ async fn main() -> anyhow::Result<()> {
 
     let last_height = get_last_height(&client).await?;
     let start_block = if config.force_from_block_height {
-        tracing::warn!("Forcing reindex from block height: {}", block_height);
+        tracing::warn!(
+            target: crate::config::INDEXER,
+            "Forcing reindex from block height: {}",
+            block_height
+        );
         block_height
     } else {
         std::cmp::max(block_height, last_height + 1)
     };
 
-    tracing::info!("Starting indexer at block height: {}", start_block);
+    tracing::info!(
+        target: crate::config::INDEXER,
+        "Starting indexer at block height: {}",
+        start_block
+    );
 
     let blocksapi_config = blocksapi::BlocksApiConfigBuilder::default()
         .server_addr(config.blocksapi_server_addr.clone())
@@ -59,7 +67,10 @@ async fn main() -> anyhow::Result<()> {
 
     // Initiate metrics http server
     if config.metrics_basic_auth_user.is_some() && config.metrics_basic_auth_password.is_some() {
-        tracing::info!("Metrics server basic auth is enabled");
+        tracing::info!(
+            target: crate::config::INDEXER,
+            "Metrics server basic auth is enabled"
+        );
         tokio::spawn(metrics::init_server_with_basic_auth(
             config.metrics_server_port,
             (
@@ -74,7 +85,10 @@ async fn main() -> anyhow::Result<()> {
             ),
         )?);
     } else {
-        tracing::info!("Metrics server basic auth is disabled");
+        tracing::info!(
+            target: crate::config::INDEXER,
+            "Metrics server basic auth is disabled"
+        );
         tokio::spawn(metrics::init_server(config.metrics_server_port)?);
     };
 

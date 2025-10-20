@@ -41,12 +41,24 @@ impl RedisReceiptCache {
             .await;
         match res {
             Ok(v) => {
-                tracing::trace!(op="get", key=%redis_key, hit=v.is_some(), ms=%start.elapsed().as_millis());
+                tracing::trace!(
+                    target: crate::config::INDEXER,
+                    op="get",
+                    key=%redis_key,
+                    hit=v.is_some(),
+                    ms=%start.elapsed().as_millis()
+                );
                 Ok(v)
             }
-            Err(e) => {
-                tracing::warn!(op="get", key=%redis_key, error=%e, "redis error");
-                Err(e.into())
+            Err(err) => {
+                tracing::warn!(
+                    target: crate::config::INDEXER,
+                    op="get",
+                    key=%redis_key,
+                    error=%err,
+                    "redis error"
+                );
+                Err(err.into())
             }
         }
     }
@@ -55,13 +67,24 @@ impl RedisReceiptCache {
         let redis_key = Self::key_receipt(&key);
         let start = std::time::Instant::now();
         let mut conn = self.manager.clone();
-        if let Err(e) = conn
+        if let Err(err) = conn
             .set_ex::<_, _, ()>(redis_key.clone(), value, self.ttl_seconds)
             .await
         {
-            tracing::warn!(op="set", key=%redis_key, error=%e, "redis set failed");
+            tracing::warn!(
+                target: crate::config::INDEXER,
+                op="set",
+                key=%redis_key,
+                error=%err,
+                "redis set failed"
+            );
         } else {
-            tracing::trace!(op="set", key=%redis_key, ms=%start.elapsed().as_millis());
+            tracing::trace!(
+                target: crate::config::INDEXER,
+                op="set",
+                key=%redis_key,
+                ms=%start.elapsed().as_millis()
+            );
         }
     }
 
@@ -80,9 +103,14 @@ impl RedisReceiptCache {
                 tracing::trace!(op="potential_get", key=%redis_key, hit=v.is_some(), ms=%start.elapsed().as_millis());
                 Ok(v)
             }
-            Err(e) => {
-                tracing::warn!(op="potential_get", key=%redis_key, error=%e);
-                Err(e.into())
+            Err(err) => {
+                tracing::warn!(
+                    target: crate::config::INDEXER,
+                    op="potential_get",
+                    key=%redis_key,
+                    error=%err
+                );
+                Err(err.into())
             }
         }
     }
@@ -90,11 +118,16 @@ impl RedisReceiptCache {
     pub async fn potential_set(&self, key: ReceiptOrDataId, value: ParentTransactionHashString) {
         let redis_key = Self::key_potential(&key);
         let mut conn = self.manager.clone();
-        if let Err(e) = conn
+        if let Err(err) = conn
             .set_ex::<_, _, ()>(redis_key.clone(), value, self.ttl_seconds)
             .await
         {
-            tracing::warn!(op="potential_set", key=%redis_key, error=%e);
+            tracing::warn!(
+                target: crate::config::INDEXER,
+                op="potential_set",
+                key=%redis_key,
+                error=%err
+            );
         }
     }
     // Batches multiple SETEX calls into a single pipeline.
@@ -140,10 +173,20 @@ impl RedisReceiptCache {
         }
         // Explicit type annotation for pipeline result
         let res: redis::RedisResult<()> = pipe.query_async(&mut conn).await;
-        if let Err(e) = res {
-            tracing::warn!(op="set_many", error=%e, "redis pipeline failed");
+        if let Err(err) = res {
+            tracing::warn!(
+                target: crate::config::INDEXER,
+                op="set_many",
+                error=%err,
+                "redis pipeline failed"
+            );
         } else {
-            tracing::trace!(op="set_many", count=%count, "batched receipt mappings written");
+            tracing::trace!(
+                target: crate::config::INDEXER,
+                op="set_many",
+                count=%count,
+                "batched receipt mappings written"
+            );
         }
     }
 }
