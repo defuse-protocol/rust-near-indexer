@@ -269,7 +269,7 @@ async fn process_single_outcome(
                     status: parse_status(outcome.execution_outcome.outcome.status.clone()),
                     logs: logs_json,
                     tokens_burnt: outcome.execution_outcome.outcome.tokens_burnt.to_string(),
-                    gas_burnt: outcome.execution_outcome.outcome.gas_burnt,
+                    gas_burnt: outcome.execution_outcome.outcome.gas_burnt.as_gas(),
                     receipt_ids: receipt_ids.iter().map(|id| id.to_string()).collect(),
                 };
 

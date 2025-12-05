@@ -101,6 +101,7 @@ pub enum Action {
     Delegate(Box<near_primitives::action::delegate::SignedDelegateAction>),
     DeployGlobalContract(near_primitives::action::DeployGlobalContractAction),
     UseGlobalContract(Box<near_primitives::action::UseGlobalContractAction>),
+    DeterministicStateInit(Box<near_primitives::action::DeterministicStateInitAction>),
 }
 
 impl TryFrom<&near_primitives::views::ActionView> for Action {
@@ -123,6 +124,9 @@ impl TryFrom<&near_primitives::views::ActionView> for Action {
                 Action::DeployGlobalContract(a)
             }
             near_primitives::action::Action::UseGlobalContract(a) => Action::UseGlobalContract(a),
+            near_primitives::action::Action::DeterministicStateInit(a) => {
+                Action::DeterministicStateInit(a)
+            }
         })
     }
 }
