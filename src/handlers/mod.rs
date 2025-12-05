@@ -66,16 +66,11 @@ async fn handle_streamer_message(
         message.block.header.height
     );
 
-    // We always process transactions first to populate the cache
-    // with mappings from Receipt IDs to their parent Transaction hashes.
-    transactions::handle_transactions(&message, client, receipts_cache_arc.clone()).await?;
-
-    let receipts_and_outcomes_future = receipts_and_outcomes::handle_receipts_and_outcomes(
-        &message,
-        client,
-        receipts_cache_arc.clone(),
-        app_config.outcome_concurrency,
-    );
+    if !app_config.events_only {
+        // We always process transactions first to populate the cache
+        // with mappings from Receipt IDs to their parent Transaction hashes.
+        transactions::handle_transactions(&message, client, receipts_cache_arc.clone()).await?;
+    }
 
     let events_future = events::handle_events(
         &message,
@@ -84,8 +79,19 @@ async fn handle_streamer_message(
         app_config.outcome_concurrency,
     );
 
-    // Run receipts+outcomes and events in parallel
-    tokio::try_join!(receipts_and_outcomes_future, events_future)?;
+    if !app_config.events_only {
+        let receipts_and_outcomes_future = receipts_and_outcomes::handle_receipts_and_outcomes(
+            &message,
+            client,
+            receipts_cache_arc.clone(),
+            app_config.outcome_concurrency,
+        );
+
+        // Run receipts+outcomes and events in parallel
+        tokio::try_join!(receipts_and_outcomes_future, events_future)?;
+    } else {
+        events_future.await?;
+    }
 
     crate::metrics::BLOCK_PROCESSED_TOTAL.inc();
     let duration = start.elapsed();

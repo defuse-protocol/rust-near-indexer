@@ -85,6 +85,10 @@ pub struct AppConfig {
     /// Blocks API token (env: BLOCKSAPI_TOKEN)
     #[clap(long, env = "BLOCKSAPI_TOKEN")]
     pub blocksapi_token: String,
+
+    /// Handle only events ignoring the transactions, receipts, outcomes
+    #[clap(long)]
+    pub events_only: bool,
 }
 
 pub async fn init_tracing_with_otel(config: &AppConfig) -> anyhow::Result<()> {
