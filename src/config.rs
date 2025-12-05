@@ -87,7 +87,7 @@ pub struct AppConfig {
     pub blocksapi_token: String,
 
     /// Handle only events ignoring the transactions, receipts, outcomes
-    #[clap(long)]
+    #[clap(long, env = "EVENTS_ONLY_MODE")]
     pub events_only: bool,
 }
 

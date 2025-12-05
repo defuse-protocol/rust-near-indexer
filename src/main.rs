@@ -3,7 +3,9 @@ use clap::Parser;
 extern crate lazy_static;
 
 use crate::config::{AppConfig, init_tracing_with_otel};
-use crate::database::{get_last_height, init_clickhouse_client};
+use crate::database::{
+    get_last_height_events, get_last_height_transactions, init_clickhouse_client,
+};
 
 mod cache;
 mod config;
@@ -33,7 +35,15 @@ async fn main() -> anyhow::Result<()> {
 
     let block_height: u64 = config.block_height;
 
-    let last_height = get_last_height(&client).await?;
+    let last_height = if config.events_only {
+        tracing::warn!(
+            "EVENTS ONLY mode is active, all transactions, receipts and execution outcomes will be ignored by this indexer!"
+        );
+        get_last_height_events(&client).await?
+    } else {
+        get_last_height_transactions(&client).await?
+    };
+
     let start_block = if config.force_from_block_height {
         tracing::warn!(
             target: crate::config::INDEXER,
