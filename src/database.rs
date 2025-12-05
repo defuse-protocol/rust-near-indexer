@@ -37,6 +37,7 @@ pub async fn insert_rows(
     let retry_strategy = FixedInterval::from_millis(500).take(SAVE_ATTEMPTS);
     Retry::spawn(retry_strategy, || async {
         try_insert_rows(client, table, rows).await.map_err(|err| {
+            crate::metrics::DATABASE_INSERT_RETRIES_TOTAL.inc();
             tracing::warn!(
                 target: crate::config::INDEXER,
                 "Failed to insert rows into {}: {}",
