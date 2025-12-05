@@ -65,6 +65,10 @@ pub async fn handle_events(
     };
 
     let event_count = event_results.len();
+    crate::metrics::ASSETS_IN_BLOCK_TOTAL
+        .with_label_values(&["events"])
+        .set(event_count as i64);
+
     let rows: Vec<EventRow> =
         event_results
             .into_iter()
@@ -84,6 +88,10 @@ pub async fn handle_events(
                     Err(err)
                 }
             })?;
+
+    crate::metrics::ASSETS_IN_BLOCK_CAPTURED_TOTAL
+        .with_label_values(&["events"])
+        .set(rows.len() as i64);
 
     {
         let _span =

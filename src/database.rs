@@ -12,7 +12,23 @@ pub fn init_clickhouse_client(config: &AppConfig) -> Client {
         .with_database(&config.clickhouse_database)
 }
 
-pub async fn get_last_height(client: &Client) -> Result<u64, clickhouse::error::Error> {
+/// Gets the last stored block_height from transactions table
+pub async fn get_last_height_transactions(
+    client: &Client,
+) -> Result<u64, clickhouse::error::Error> {
+    tracing::info!(
+        target: crate::config::INDEXER,
+        "Fetching last indexed block height from ClickHouse..."
+    );
+    client
+        .query("SELECT max(block_height) FROM transactions")
+        .fetch_one::<u64>()
+        .await
+}
+
+/// Gets the last stored block_height from events table
+/// Should be used along with the `--events-only` mode
+pub async fn get_last_height_events(client: &Client) -> Result<u64, clickhouse::error::Error> {
     tracing::info!(
         target: crate::config::INDEXER,
         "Fetching last indexed block height from ClickHouse..."
