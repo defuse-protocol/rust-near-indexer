@@ -246,7 +246,7 @@ async fn parse_transaction_execution_outcome(
             executor_id: tx.outcome.execution_outcome.outcome.executor_id.to_string(),
             parent_transaction_hash: tx.transaction.hash.to_string(),
             status: parse_status(tx.outcome.execution_outcome.outcome.status.clone()),
-            gas_burnt: tx.outcome.execution_outcome.outcome.gas_burnt,
+            gas_burnt: tx.outcome.execution_outcome.outcome.gas_burnt.as_gas(),
             tokens_burnt: tx
                 .outcome
                 .execution_outcome
