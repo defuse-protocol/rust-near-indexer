@@ -74,6 +74,11 @@ lazy_static! {
         "Total number of errors while storing transactions"
     )
     .unwrap();
+    pub(crate) static ref DATABASE_INSERT_RETRIES_TOTAL: IntCounter = try_create_int_counter(
+        "database_insert_retries_total",
+        "Total number of retry attempts for database inserts"
+    )
+    .unwrap();
     // Exposes build/runtime version as a gauge with value 1; label "version" carries the crate version.
     pub(crate) static ref VERSION_INFO: IntGaugeVec = register_int_gauge_vec(
         "indexer_version_info",
