@@ -1,8 +1,7 @@
 use crate::config::AppConfig;
 use clickhouse::{Client, Row};
-use tokio_retry::{Retry, strategy::FixedInterval};
 
-const SAVE_ATTEMPTS: usize = 20;
+const SAVE_ATTEMPTS: usize = 10;
 
 pub fn init_clickhouse_client(config: &AppConfig) -> Client {
     Client::default()
@@ -50,8 +49,13 @@ pub async fn insert_rows(
     table: &str,
     rows: &[impl Row + serde::Serialize],
 ) -> anyhow::Result<()> {
-    let retry_strategy = FixedInterval::from_millis(500).take(SAVE_ATTEMPTS);
-    Retry::spawn(retry_strategy, || async {
+    // Starts at 250ms
+    // Doubles with each attempt (250ms → 500ms → 1s → 2s, etc.)
+    // Caps out at 60 seconds maximum or when the maximum number of attempts is reached
+    let retry_strategy = tokio_retry::strategy::ExponentialBackoff::from_millis(250)
+        .max_delay(std::time::Duration::from_secs(60))
+        .take(SAVE_ATTEMPTS);
+    tokio_retry::Retry::spawn(retry_strategy, || async {
         try_insert_rows(client, table, rows).await.map_err(|err| {
             crate::metrics::DATABASE_INSERT_RETRIES_TOTAL.inc();
             tracing::warn!(
@@ -86,10 +90,10 @@ async fn try_insert_rows(
     if rows.is_empty() {
         return Ok(());
     }
-    let mut insert = client.insert(table)?;
+    let mut inserter = client.inserter(table)?;
     for row in rows {
-        insert.write(row).await?;
+        inserter.write(row)?;
     }
-    insert.end().await?;
+    inserter.end().await?;
     Ok(())
 }

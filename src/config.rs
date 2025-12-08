@@ -97,17 +97,17 @@ pub async fn init_tracing_with_otel(config: &AppConfig) -> anyhow::Result<()> {
     let mut env_filter = tracing_subscriber::EnvFilter::new(format!("{}=info,info", INDEXER));
 
     // Override or add directives from RUST_LOG if set
-    if let Ok(rust_log) = std::env::var("RUST_LOG") {
-        if !rust_log.is_empty() {
-            for directive in rust_log.split(',').filter_map(|s| match s.parse() {
-                Ok(directive) => Some(directive),
-                Err(err) => {
-                    eprintln!("Ignoring directive `{}`: {}", s, err);
-                    None
-                }
-            }) {
-                env_filter = env_filter.add_directive(directive);
+    if let Ok(rust_log) = std::env::var("RUST_LOG")
+        && !rust_log.is_empty()
+    {
+        for directive in rust_log.split(',').filter_map(|s| match s.parse() {
+            Ok(directive) => Some(directive),
+            Err(err) => {
+                eprintln!("Ignoring directive `{}`: {}", s, err);
+                None
             }
+        }) {
+            env_filter = env_filter.add_directive(directive);
         }
     }
 
