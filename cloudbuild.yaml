@@ -1,5 +1,5 @@
 steps:
-  - name: rust:1.86
+  - name: rust:1.90
     entrypoint: bash
     args:
       - -c

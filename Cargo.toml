@@ -1,8 +1,8 @@
 [package]
 name = "near-defuse-indexer"
-version = "0.2.3"
+version = "0.3.0"
 edition = "2024"
-rust-version = "1.86.0"
+rust-version = "1.90.0"
 
 [[bin]]
 name = "near-defuse-indexer"
@@ -15,7 +15,7 @@ anyhow = "1.0.51"
 async-trait = "0.1"
 base64 = "0.22.1"
 clap = { version = "4.5", features = ["derive", "env"] }
-clickhouse = { version = "0.13.2", features = ["rustls-tls"] }
+clickhouse = { version = "0.13.2", features = ["rustls-tls", "inserter"] }
 dotenv = "0.15.0"
 itertools = "0.10.3"
 lazy_static = "1.4.0"
