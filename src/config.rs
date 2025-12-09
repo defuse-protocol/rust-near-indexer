@@ -100,7 +100,7 @@ pub async fn init_tracing_with_otel(config: &AppConfig) -> anyhow::Result<()> {
     if let Ok(rust_log) = std::env::var("RUST_LOG")
         && !rust_log.is_empty()
     {
-        for directive in rust_log.split(',').filter_map(|s| match s.parse() {
+        for directive in rust_log.split(',').filter_map(|s| match s.trim().parse() {
             Ok(directive) => Some(directive),
             Err(err) => {
                 eprintln!("Ignoring directive `{}`: {}", s, err);
