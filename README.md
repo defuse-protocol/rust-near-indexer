@@ -27,17 +27,17 @@ cargo build --release
 Before running the indexer, ensure that all required environment variables are set:
 The indexer is configured via environment variables. The table below lists the most commonly used options. Values marked REQUIRED must be provided; others have sensible defaults or are optional depending on features you use.
 
-| Variable                | Required | Description |
-|-------------------------|:--------:|-------------|
-| `CLICKHOUSE_URL`        |    Yes   | Clickhouse server URL (e.g. `http://localhost:18123`) |
-| `CLICKHOUSE_USER`       |    Yes   | Clickhouse username |
-| `CLICKHOUSE_PASSWORD`   |    Yes   | Clickhouse password |
-| `CLICKHOUSE_DATABASE`   |    Yes   | Clickhouse database name (default: `mainnet`) |
+| Variable                | Required | Description                                                                          |
+| ----------------------- | :------: | ------------------------------------------------------------------------------------ |
+| `CLICKHOUSE_URL`        |   Yes    | Clickhouse server URL (e.g. `http://localhost:18123`)                                |
+| `CLICKHOUSE_USER`       |   Yes    | Clickhouse username                                                                  |
+| `CLICKHOUSE_PASSWORD`   |   Yes    | Clickhouse password                                                                  |
+| `CLICKHOUSE_DATABASE`   |   Yes    | Clickhouse database name (default: `mainnet`)                                        |
 | `BLOCK_HEIGHT`          |    No    | Start block height for indexing — if unset the indexer resumes from last saved state |
-| `REDIS_URL`             |    No    | Redis connection URL for caching (optional) |
-| `OUTCOME_CONCURRENCY`   |    No    | Per-outcome parallelism (default: 32) |
-| `BLOCKSAPI_SERVER_ADDR` |    Yes   | Blocks API server address |
-| `BLOCKSAPI_TOKEN`       |    Yes   | Blocks API access token |
+| `REDIS_URL`             |    No    | Redis connection URL for caching (optional)                                          |
+| `OUTCOME_CONCURRENCY`   |    No    | Per-outcome parallelism (default: 32)                                                |
+| `BLOCKSAPI_SERVER_ADDR` |   Yes    | Blocks API server address                                                            |
+| `BLOCKSAPI_TOKEN`       |   Yes    | Blocks API access token                                                              |
 
 Quick examples:
 
@@ -65,12 +65,14 @@ cargo run --release
 ```
 
 Notes:
+
 - If you use NEAR Lake with S3, provide AWS credentials or an appropriate IAM role.
 - `REDIS_URL` is optional and used for the transaction cache; leave unset to disable Redis caching.
 
 ## Usage
 
 Prerequisites
+
 - Clickhouse server running and reachable via `CLICKHOUSE_URL`.
 - (Optional) Redis server if using caching.
 
@@ -87,14 +89,17 @@ BLOCK_HEIGHT=130636886 cargo run --release
 ```
 
 Deployment suggestions
+
 - For production runs consider running the binary as a systemd service, in a container, or using a process supervisor so it restarts on failure.
 - Ensure Clickhouse and Redis (if used) are configured for persistent storage and appropriate resource limits.
 
 What the indexer does
+
 - Connects to the NEAR stream, decodes events, and writes structured rows into Clickhouse tables defined in this README.
 - Persists a small transaction cache to Redis (if `REDIS_URL` is provided) to deduplicate work across blocks.
 
 Logging and metrics
+
 - The indexer emits logs (see `RUST_LOG` environment variable to control level). Use `RUST_LOG=info` or `debug` while developing.
 - Metrics are exported for monitoring (see `metrics.rs` in `src/` for details). Hook Prometheus to the exposed endpoint if you run metrics collection.
 
@@ -105,15 +110,19 @@ The indexer includes OpenTelemetry tracing support to help identify performance 
 ### Quick Setup
 
 1. **Start Jaeger for trace collection:**
+
 ```bash
 ./run_with_tracing.sh
 ```
+
 This script will:
+
 - Start Jaeger using Docker
 - Configure environment variables
 - Build and run the indexer with tracing enabled
 
 2. **Manual setup:**
+
 ```bash
 # Start Jaeger
 docker-compose -f docker-compose.tracing.yml up jaeger -d
@@ -150,6 +159,7 @@ The tracing implementation provides detailed timing for:
 Use `./analyze_performance.sh` for analysis tips and current metrics.
 
 Key questions the tracing helps answer:
+
 - Which handler is the bottleneck?
 - Are database inserts slow?
 - Is caching helping or hurting?
@@ -162,7 +172,7 @@ For detailed tracing documentation, see [TRACING.md](./TRACING.md).
 The project is structured as follows:
 
 - `main.rs`: Initializes the application, connects to Clickhouse, and starts the indexer.
-The project layout (top-level `src/` files):
+  The project layout (top-level `src/` files):
 
 - `main.rs` — application entrypoint: loads configuration, starts runtime, wires components.
 - `database.rs` — Clickhouse connectivity, schema helper code and insert helpers.
@@ -171,14 +181,17 @@ The project layout (top-level `src/` files):
 - `cache/` — transaction cache implementations (local / redis-backed).
 
 Editing and extending
+
 - Add new materialized views or tables to the schema section below. If you add a table referenced by a view, keep names consistent.
 
 Troubleshooting
+
 - Connection refused to Clickhouse: verify `CLICKHOUSE_URL` and that Clickhouse is running and reachable from the host.
 - Authentication errors: check `CLICKHOUSE_USER`/`CLICKHOUSE_PASSWORD` and Clickhouse user grants.
 - High memory/CPU in Clickhouse: tune Clickhouse server settings or reduce ingestion concurrency.
 
 Contributing
+
 - Open a PR on the `feat/potential-cache` or relevant branch, make small focused changes, and include tests where reasonable.
 - Update this README if you add configuration variables or change runtime behavior.
 
@@ -533,6 +546,210 @@ FROM decoded_events
 SETTINGS function_json_value_return_type_allow_nullable = true, function_json_value_return_type_allow_complex = true;
 
 
+CREATE TABLE silver_dip4_transfer (
+    block_height                UInt64 COMMENT 'The height of the block',
+    block_timestamp             DateTime64(9, 'UTC') COMMENT 'The timestamp of the block in UTC',
+    block_hash                  String COMMENT 'The hash of the block',
+    tx_hash                     String COMMENT 'The hash of transaction',
+    contract_id                 String COMMENT 'The ID of the account on which the execution outcome happens',
+    execution_status            String COMMENT 'The execution outcome status',
+    version                     String COMMENT 'The event version',
+    standard                    String COMMENT 'The event standard',
+    event                       String COMMENT 'The event type',
+    related_receipt_id          String COMMENT 'The execution outcome receipt ID',
+    related_receipt_receiver_id String COMMENT 'The destination account ID',
+    related_receipt_predecessor_id String COMMENT 'The account ID which issued a receipt. In case of a gas or deposit refund, the account ID is system',
+    memo                        Nullable(String) COMMENT 'The event memo',
+    old_owner_id                Nullable(String) COMMENT 'The sender account ID',
+    new_owner_id                Nullable(String) COMMENT 'The recipient account ID',
+    token_id                    Nullable(String) COMMENT 'The token ID',
+    amount                      Nullable(Float64) COMMENT 'The amount',
+    intent_hash                 String COMMENT 'The intent hash',
+    INDEX block_timestamp_minmax_idx block_timestamp TYPE minmax GRANULARITY 1,
+    INDEX contract_id_bloom_index contract_id TYPE bloom_filter() GRANULARITY 1,
+    INDEX related_receipt_id_bloom_index related_receipt_id TYPE bloom_filter() GRANULARITY 1,
+    INDEX related_receipt_receiver_id_bloom_index related_receipt_receiver_id TYPE bloom_filter() GRANULARITY 1
+) ENGINE = ReplacingMergeTree
+PRIMARY KEY (block_height, related_receipt_id, event, old_owner_id, new_owner_id, token_id)
+ORDER BY (block_height, related_receipt_id, event, old_owner_id, new_owner_id, token_id)
+SETTINGS allow_nullable_key = true, index_granularity = 8192;
+
+
+CREATE MATERIALIZED VIEW mv_silver_dip4_transfer TO silver_dip4_transfer (
+    block_height                UInt64,
+    block_timestamp             DateTime64(9, 'UTC'),
+    block_hash                  String,
+    tx_hash                     String,
+    contract_id                 String,
+    execution_status            String,
+    version                     String,
+    standard                    String,
+    event                       String,
+    related_receipt_id          String,
+    related_receipt_receiver_id String,
+    related_receipt_predecessor_id String,
+    memo                        Nullable(String),
+    old_owner_id                Nullable(String),
+    new_owner_id                Nullable(String),
+    token_id                    String,
+    amount                      Float64,
+    intent_hash                 String
+) AS
+WITH decoded_events AS (
+    SELECT *, arrayJoin(JSONExtractArrayRaw(data)) AS data_row
+    FROM events
+    WHERE (contract_id IN ('defuse-alpha.near', 'intents.near')) AND (standard = 'dip4') AND (event = 'transfer')
+), parsed AS (
+    SELECT *,
+           coalesce(JSON_VALUE(data_row, '$.memo'), '') AS memo,
+           JSON_VALUE(data_row, '$.account_id') AS old_owner_id,
+           JSON_VALUE(data_row, '$.receiver_id') AS new_owner_id,
+           coalesce(JSON_VALUE(data_row, '$.intent_hash'), '') AS intent_hash,
+           JSONExtractKeysAndValues(assumeNotNull(coalesce(JSON_VALUE(data_row, '$.tokens'), '{}')), 'String') AS token_pairs
+    FROM decoded_events
+), tokens_flattened AS (
+    SELECT *, (arrayJoin(token_pairs) AS tp).1 AS token_id, tp.2 AS amount_str
+    FROM parsed
+)
+SELECT block_height, block_timestamp, block_hash, tx_hash, contract_id, execution_status, version, standard, event, related_receipt_id, related_receipt_receiver_id, related_receipt_predecessor_id, memo, old_owner_id, new_owner_id, token_id, CAST(replaceAll(amount_str, '"', ''), 'Float64') AS amount, intent_hash
+FROM tokens_flattened
+SETTINGS function_json_value_return_type_allow_nullable = true, function_json_value_return_type_allow_complex = true;
+
+
+CREATE VIEW silver_transfers (
+    block_height                UInt64,
+    block_timestamp             DateTime64(9, 'UTC'),
+    block_hash                  String,
+    tx_hash                     String,
+    contract_id                 String,
+    execution_status            String,
+    version                     String,
+    standard                    String,
+    event                       String,
+    related_receipt_id          String,
+    related_receipt_receiver_id String,
+    related_receipt_predecessor_id String,
+    memo                        Nullable(String),
+    old_owner_id                Nullable(String),
+    new_owner_id                Nullable(String),
+    token_id                    Nullable(String),
+    amount                      Nullable(Float64),
+    intent_hash                 String
+) AS
+SELECT block_height, block_timestamp, block_hash, tx_hash, contract_id, execution_status, version, standard, event, related_receipt_id, related_receipt_receiver_id, related_receipt_predecessor_id, memo, old_owner_id, new_owner_id, token_id, amount, '' AS intent_hash
+FROM silver_nep_245_events
+WHERE contract_id IN ('defuse-alpha.near', 'intents.near')
+UNION ALL
+SELECT block_height, block_timestamp, block_hash, tx_hash, contract_id, execution_status, version, standard, event, related_receipt_id, related_receipt_receiver_id, related_receipt_predecessor_id, memo, old_owner_id, new_owner_id, token_id, amount, intent_hash
+FROM silver_dip4_transfer;
+```
+
+## Clickhouse schema (staging)
+
+Staging tables mirror production silver tables but track the `staging-intents.near` contract. These must be kept separate from production data.
+
+```sql
+CREATE TABLE staging_silver_dip4_transfer (
+    block_height                UInt64 COMMENT 'The height of the block',
+    block_timestamp             DateTime64(9, 'UTC') COMMENT 'The timestamp of the block in UTC',
+    block_hash                  String COMMENT 'The hash of the block',
+    tx_hash                     String COMMENT 'The hash of transaction',
+    contract_id                 String COMMENT 'The ID of the account on which the execution outcome happens',
+    execution_status            String COMMENT 'The execution outcome status',
+    version                     String COMMENT 'The event version',
+    standard                    String COMMENT 'The event standard',
+    event                       String COMMENT 'The event type',
+    related_receipt_id          String COMMENT 'The execution outcome receipt ID',
+    related_receipt_receiver_id String COMMENT 'The destination account ID',
+    related_receipt_predecessor_id String COMMENT 'The account ID which issued a receipt. In case of a gas or deposit refund, the account ID is system',
+    memo                        Nullable(String) COMMENT 'The event memo',
+    old_owner_id                Nullable(String) COMMENT 'The sender account ID',
+    new_owner_id                Nullable(String) COMMENT 'The recipient account ID',
+    token_id                    Nullable(String) COMMENT 'The token ID',
+    amount                      Nullable(Float64) COMMENT 'The amount',
+    intent_hash                 String COMMENT 'The intent hash',
+    INDEX block_timestamp_minmax_idx block_timestamp TYPE minmax GRANULARITY 1,
+    INDEX contract_id_bloom_index contract_id TYPE bloom_filter() GRANULARITY 1,
+    INDEX related_receipt_id_bloom_index related_receipt_id TYPE bloom_filter() GRANULARITY 1,
+    INDEX related_receipt_receiver_id_bloom_index related_receipt_receiver_id TYPE bloom_filter() GRANULARITY 1
+) ENGINE = ReplacingMergeTree
+PRIMARY KEY (block_height, related_receipt_id, event, old_owner_id, new_owner_id, token_id)
+ORDER BY (block_height, related_receipt_id, event, old_owner_id, new_owner_id, token_id)
+SETTINGS allow_nullable_key = true, index_granularity = 8192;
+
+
+CREATE MATERIALIZED VIEW mv_staging_silver_dip4_transfer TO staging_silver_dip4_transfer (
+    block_height                UInt64,
+    block_timestamp             DateTime64(9, 'UTC'),
+    block_hash                  String,
+    tx_hash                     String,
+    contract_id                 String,
+    execution_status            String,
+    version                     String,
+    standard                    String,
+    event                       String,
+    related_receipt_id          String,
+    related_receipt_receiver_id String,
+    related_receipt_predecessor_id String,
+    memo                        Nullable(String),
+    old_owner_id                Nullable(String),
+    new_owner_id                Nullable(String),
+    token_id                    String,
+    amount                      Float64,
+    intent_hash                 String
+) AS
+WITH decoded_events AS (
+    SELECT *, arrayJoin(JSONExtractArrayRaw(data)) AS data_row
+    FROM events
+    WHERE (contract_id = 'staging-intents.near') AND (standard = 'dip4') AND (event = 'transfer')
+), parsed AS (
+    SELECT *,
+           coalesce(JSON_VALUE(data_row, '$.memo'), '') AS memo,
+           JSON_VALUE(data_row, '$.account_id') AS old_owner_id,
+           JSON_VALUE(data_row, '$.receiver_id') AS new_owner_id,
+           coalesce(JSON_VALUE(data_row, '$.intent_hash'), '') AS intent_hash,
+           JSONExtractKeysAndValues(assumeNotNull(coalesce(JSON_VALUE(data_row, '$.tokens'), '{}')), 'String') AS token_pairs
+    FROM decoded_events
+), tokens_flattened AS (
+    SELECT *, (arrayJoin(token_pairs) AS tp).1 AS token_id, tp.2 AS amount_str
+    FROM parsed
+)
+SELECT block_height, block_timestamp, block_hash, tx_hash, contract_id, execution_status, version, standard, event, related_receipt_id, related_receipt_receiver_id, related_receipt_predecessor_id, memo, old_owner_id, new_owner_id, token_id, CAST(replaceAll(amount_str, '"', ''), 'Float64') AS amount, intent_hash
+FROM tokens_flattened
+SETTINGS function_json_value_return_type_allow_nullable = true, function_json_value_return_type_allow_complex = true;
+
+
+CREATE VIEW staging_silver_transfers (
+    block_height                UInt64,
+    block_timestamp             DateTime64(9, 'UTC'),
+    block_hash                  String,
+    tx_hash                     String,
+    contract_id                 String,
+    execution_status            String,
+    version                     String,
+    standard                    String,
+    event                       String,
+    related_receipt_id          String,
+    related_receipt_receiver_id String,
+    related_receipt_predecessor_id String,
+    memo                        Nullable(String),
+    old_owner_id                Nullable(String),
+    new_owner_id                Nullable(String),
+    token_id                    Nullable(String),
+    amount                      Nullable(Float64),
+    intent_hash                 String
+) AS
+SELECT block_height, block_timestamp, block_hash, tx_hash, contract_id, execution_status, version, standard, event, related_receipt_id, related_receipt_receiver_id, related_receipt_predecessor_id, memo, old_owner_id, new_owner_id, token_id, amount, '' AS intent_hash
+FROM silver_nep_245_events
+WHERE contract_id = 'staging-intents.near'
+UNION ALL
+SELECT block_height, block_timestamp, block_hash, tx_hash, contract_id, execution_status, version, standard, event, related_receipt_id, related_receipt_receiver_id, related_receipt_predecessor_id, memo, old_owner_id, new_owner_id, token_id, amount, intent_hash
+FROM staging_silver_dip4_transfer;
+```
+
+## Clickhouse schema (gold views)
+
+```sql
 CREATE VIEW gold_view_intents_metrics (
     day Date,
     symbol String,
@@ -561,8 +778,11 @@ FROM decoded
 WHERE (symbol != '') AND (blockchain != '')
 GROUP BY ALL
 ORDER BY 1 ASC;
+```
 
+## Clickhouse schema (bronze tables)
 
+```sql
 CREATE TABLE transactions (
     block_height         UInt64 COMMENT 'The height of the block',
     block_timestamp      DateTime64(9, 'UTC') COMMENT 'The timestamp of the block in UTC',
@@ -620,3 +840,4 @@ CREATE TABLE execution_outcomes (
 PRIMARY KEY (block_height, execution_outcome_id)
 ORDER BY (block_height, execution_outcome_id)
 SETTINGS index_granularity = 8192;
+```
