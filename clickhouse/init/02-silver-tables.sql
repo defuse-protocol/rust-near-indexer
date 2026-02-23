@@ -1,216 +1,15 @@
-# NEAR Defuse Custom Indexer
+-- Silver layer tables and materialized views.
+-- Executed on first ClickHouse container start via /docker-entrypoint-initdb.d/.
+--
+-- Note: The defuse_assets MV is intentionally excluded because it fetches from
+-- an external URL (https://api-mng-console.chaindefuser.com) which won't work
+-- in local/CI environments.
 
-This project is a Rust-based indexer that processes blockchain events from NEAR Protocol and inserts them into a Clickhouse database for efficient querying. It uses [blocksapi-rs](https://github.com/defuse-protocol/blocksapi-rs) for streaming blockchain data and stores structured events in a Clickhouse database.
+-- ============================================================================
+-- defuse_assets (table only, no MV)
+-- ============================================================================
 
-## Features
-
-- Stream NEAR blockchain events starting from a specified block height.
-- Filter and structure events based on specific standards.
-- Store events in a Clickhouse database.
-- Persist transaction cache to Redis with automatic expiration after 50 blocks.
-- **Performance Tracing**: OpenTelemetry integration for identifying performance bottlenecks
-
-## Requirements
-
-1. [Rust](https://www.rust-lang.org/tools/install) 1.90.0 version recommended)
-2. [Clickhouse](https://clickhouse.com/docs/en/quick-start#self-managed-install) database server
-3. [Docker](https://docs.docker.com/get-docker/) (for local development)
-4. Environment variables for configuration
-
-### Build the project
-
-```bash
-cargo build --release
-```
-
-## Local Development (Docker Compose)
-
-The fastest way to get a local ClickHouse + Redis environment:
-
-```bash
-# Start ClickHouse and Redis (schema auto-created on first run)
-docker compose up -d --wait
-
-# Copy and edit .env
-cp .env.example .env
-# Edit .env — set BLOCKSAPI_SERVER_ADDR and BLOCKSAPI_TOKEN
-
-# Build & run
-cargo run --release
-
-# Verify schema was created
-docker compose exec clickhouse clickhouse-client \
-  --user indexer --password indexer \
-  --query "SHOW TABLES FROM indexer"
-
-# Teardown (keep data)
-docker compose down
-
-# Teardown (reset everything)
-docker compose down -v
-```
-
-Default credentials (matching `docker-compose.yml` and `.env.example`):
-- ClickHouse: `indexer` / `indexer` / database `indexer` on `http://localhost:8123`
-- Redis: `redis://localhost:6379`
-
-The ClickHouse schema is defined in `clickhouse/init/` and auto-applied on first container start:
-
-| File | Contents |
-|------|----------|
-| `01-core-tables.sql` | `events`, `transactions`, `receipts`, `execution_outcomes` |
-| `02-silver-tables.sql` | `defuse_assets`, `silver_nep_245_events`, `silver_dip4_*` tables + MVs |
-| `03-gold-views.sql` | `gold_view_intents_metrics` |
-
-> **Note:** The `defuse_assets` materialized view (`mv_defuse_assets`) is intentionally excluded from the init scripts because it fetches from an external URL that won't be available in local/CI environments. In production, create it manually.
-
-## Environment Configuration
-
-The indexer is configured via environment variables. The table below lists the most commonly used options. Values marked REQUIRED must be provided; others have sensible defaults or are optional depending on features you use.
-
-| Variable                | Required | Description |
-|-------------------------|:--------:|-------------|
-| `CLICKHOUSE_URL`        |    Yes   | Clickhouse server URL (e.g. `http://localhost:8123`) |
-| `CLICKHOUSE_USER`       |    Yes   | Clickhouse username |
-| `CLICKHOUSE_PASSWORD`   |    Yes   | Clickhouse password |
-| `CLICKHOUSE_DATABASE`   |    Yes   | Clickhouse database name (default: `indexer`) |
-| `BLOCK_HEIGHT`          |    No    | Start block height for indexing — if unset the indexer resumes from last saved state |
-| `REDIS_URL`             |    No    | Redis connection URL for caching (optional) |
-| `OUTCOME_CONCURRENCY`   |    No    | Per-outcome parallelism (default: 32) |
-| `BLOCKSAPI_SERVER_ADDR` |    Yes   | Blocks API server address |
-| `BLOCKSAPI_TOKEN`       |    Yes   | Blocks API access token |
-
-See `.env.example` for a complete template with all options.
-
-## Usage
-
-Prerequisites
-- ClickHouse and Redis running (see [Local Development](#local-development-docker-compose) above, or use your own instances).
-- Environment variables configured (copy `.env.example` to `.env` and edit).
-
-Basic run (development / single-run):
-
-```bash
-cargo run --release
-```
-
-Override the start block on the fly:
-
-```bash
-BLOCK_HEIGHT=130636886 cargo run --release
-```
-
-Deployment suggestions
-- For production runs consider running the binary as a systemd service, in a container, or using a process supervisor so it restarts on failure.
-- Ensure Clickhouse and Redis (if used) are configured for persistent storage and appropriate resource limits.
-
-What the indexer does
-- Connects to the NEAR stream, decodes events, and writes structured rows into Clickhouse tables.
-- Persists a small transaction cache to Redis (if `REDIS_URL` is provided) to deduplicate work across blocks.
-
-Logging and metrics
-- The indexer emits logs (see `RUST_LOG` environment variable to control level). Use `RUST_LOG=info` or `debug` while developing.
-- Metrics are exported for monitoring (see `metrics.rs` in `src/` for details). Hook Prometheus to the exposed endpoint if you run metrics collection.
-
-## Performance Tracing
-
-The indexer includes OpenTelemetry tracing support to help identify performance bottlenecks. This is particularly useful when trying to improve processing speed from the current 0.4 BPS to the target 15 BPS.
-
-### Quick Setup
-
-1. **Start Jaeger for trace collection:**
-```bash
-./run_with_tracing.sh
-```
-This script will:
-- Start Jaeger using Docker
-- Configure environment variables
-- Build and run the indexer with tracing enabled
-
-2. **Manual setup:**
-```bash
-# Start Jaeger
-docker-compose -f docker-compose.tracing.yml up jaeger -d
-
-# Add to your .env file:
-OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318/v1/traces
-OTEL_SERVICE_NAME=near-defuse-indexer
-RUST_LOG=near_defuse_indexer=debug,blocksapi=info
-
-# Run the indexer
-cargo run --release
-```
-
-3. **View traces:**
-   - Open http://localhost:16686 (Jaeger UI)
-   - Select service: `near-defuse-indexer`
-   - Search for traces with operation: `handle_streamer_message`
-
-### What Gets Traced
-
-The tracing implementation provides detailed timing for:
-
-- **Block Processing**: `handle_streamer_message` - Total time per block
-- **Handler Performance**: Individual timing for:
-  - `handle_transactions` - Transaction processing time
-  - `handle_receipts` - Receipt processing time
-  - `handle_execution_outcomes` - Execution outcome processing time
-  - `handle_events` - Event processing time
-- **Database Operations**: `database_insert` - ClickHouse insertion timing
-- **Cache Operations**: Redis/local cache get/set operations
-
-### Performance Analysis
-
-Use `./analyze_performance.sh` for analysis tips and current metrics.
-
-Key questions the tracing helps answer:
-- Which handler is the bottleneck?
-- Are database inserts slow?
-- Is caching helping or hurting?
-- Do certain blocks process much slower than others?
-
-For detailed tracing documentation, see [TRACING.md](./TRACING.md).
-
-## Project Structure
-
-This is a Cargo workspace:
-
-```
-├── indexer-common/          # Shared library crate (indexer_common)
-│   └── src/
-│       ├── lib.rs           # Re-exports, CONTRACT_ACCOUNT_IDS_OF_INTEREST
-│       ├── config.rs        # AppConfig (env vars via clap), OpenTelemetry init
-│       ├── database.rs      # ClickHouse client, insert with exponential backoff
-│       ├── types.rs         # Row types, Action enum
-│       ├── metrics.rs       # Prometheus metrics server
-│       ├── handlers/        # Event handling (events, receipts, transactions, outcomes)
-│       └── cache/           # Redis receipt cache (two-tier: main + potential)
-├── indexer-clickhouse/      # Binary crate (near-defuse-indexer)
-│   └── src/main.rs          # Entry point
-├── clickhouse/init/         # ClickHouse schema (auto-applied by docker-compose)
-├── docker-compose.yml       # Local ClickHouse + Redis
-└── docker-compose.tracing.yml  # Jaeger for OpenTelemetry tracing
-```
-
-Editing and extending
-- Add new tables or materialized views to `clickhouse/init/` (the source of truth for schema).
-- Keep the schema section below in sync for quick reference.
-
-Troubleshooting
-- Connection refused to Clickhouse: verify `CLICKHOUSE_URL` and that Clickhouse is running and reachable from the host.
-- Authentication errors: check `CLICKHOUSE_USER`/`CLICKHOUSE_PASSWORD` and Clickhouse user grants.
-- High memory/CPU in Clickhouse: tune Clickhouse server settings or reduce ingestion concurrency.
-
-Contributing
-- Open a PR on the `feat/potential-cache` or relevant branch, make small focused changes, and include tests where reasonable.
-- Update this README if you add configuration variables or change runtime behavior.
-
-## Clickhouse schema
-
-Here is the Clickhouse schema to run the indexer:
-
-```sql
-CREATE TABLE defuse_assets (
+CREATE TABLE IF NOT EXISTS defuse_assets (
     blockchain          String COMMENT 'The blockchain',
     contract_address    String COMMENT 'The contract address',
     decimals            UInt64 COMMENT 'Decimals',
@@ -223,53 +22,11 @@ PRIMARY KEY (defuse_asset_id, price_updated_at)
 ORDER BY (defuse_asset_id, price_updated_at);
 
 
-CREATE MATERIALIZED VIEW mv_defuse_assets
-REFRESH EVERY 1 DAY APPEND TO defuse_assets AS (
-    WITH json_rows AS (
-        SELECT
-        arrayJoin(items) item
-        FROM url('https://api-mng-console.chaindefuser.com/api/tokens/', JSONEachRow)
-    )
+-- ============================================================================
+-- silver_nep_245_events + MV
+-- ============================================================================
 
-    SELECT
-        item.blockchain blockchain
-        , item.contract_address contract_address
-        , item.decimals decimals
-        , item.defuse_asset_id defuse_asset_id
-        , item.price price
-        , item.price_updated_at price_updated_at
-        , item.symbol symbol
-    FROM json_rows
-);
-
-
-CREATE TABLE events (
-    block_height                UInt64 COMMENT 'The height of the block',
-    block_timestamp             DateTime64(9, 'UTC') COMMENT 'The timestamp of the block in UTC',
-    block_hash                  String COMMENT 'The hash of the block',
-    contract_id                 String COMMENT 'The ID of the account on which the execution outcome happens',
-    execution_status            String COMMENT 'The execution outcome status',
-    version                     String COMMENT 'The event version',
-    standard                    String COMMENT 'The event standard',
-    index_in_log                UInt64 COMMENT 'The index in the event log',
-    event                       String COMMENT 'The event type',
-    data                        String COMMENT 'The event JSON data',
-    related_receipt_id          String COMMENT 'The execution outcome receipt ID',
-    related_receipt_receiver_id String COMMENT 'The destination account ID',
-    related_receipt_predecessor_id String COMMENT 'The account ID which issued a receipt. In case of a gas or deposit refund, the account ID is system',
-    tx_hash                     Nullable(String) COMMENT 'The transaction hash',
-    receipt_index_in_block      UInt64 COMMENT 'Index of the receipt within the block',
-    INDEX block_timestamp_minmax_idx block_timestamp TYPE minmax GRANULARITY 1,
-    INDEX contract_id_bloom_index contract_id TYPE bloom_filter() GRANULARITY 1,
-    INDEX related_receipt_id_bloom_index related_receipt_id TYPE bloom_filter() GRANULARITY 1,
-    INDEX related_receipt_receiver_id_bloom_index related_receipt_receiver_id TYPE bloom_filter() GRANULARITY 1
-) ENGINE = ReplacingMergeTree
-PRIMARY KEY (block_height, related_receipt_id, index_in_log)
-ORDER BY (block_height, related_receipt_id, index_in_log)
-SETTINGS index_granularity = 8192;
-
-
-CREATE TABLE silver_nep_245_events (
+CREATE TABLE IF NOT EXISTS silver_nep_245_events (
     block_height                UInt64 COMMENT 'The height of the block',
     block_timestamp             DateTime64(9, 'UTC') COMMENT 'The timestamp of the block in UTC',
     block_hash                  String COMMENT 'The hash of the block',
@@ -297,7 +54,7 @@ ORDER BY (block_height, related_receipt_id, event, old_owner_id, new_owner_id, t
 SETTINGS allow_nullable_key = true, index_granularity = 8192;
 
 
-CREATE MATERIALIZED VIEW mv_silver_nep_245_events TO silver_nep_245_events (
+CREATE MATERIALIZED VIEW IF NOT EXISTS mv_silver_nep_245_events TO silver_nep_245_events (
     block_height                UInt64,
     block_timestamp             DateTime64(9, 'UTC'),
     block_hash                  String,
@@ -336,7 +93,11 @@ FROM tokens_flattened
 SETTINGS function_json_value_return_type_allow_nullable = true;
 
 
-CREATE TABLE silver_dip4_token_diff (
+-- ============================================================================
+-- silver_dip4_token_diff + MV
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS silver_dip4_token_diff (
     block_height                UInt64 COMMENT 'The height of the block',
     block_timestamp             DateTime64(9, 'UTC') COMMENT 'The timestamp of the block in UTC',
     block_hash                  String COMMENT 'The hash of the block',
@@ -365,7 +126,7 @@ ORDER BY (block_height, related_receipt_id, intent_hash)
 SETTINGS index_granularity = 8192;
 
 
-CREATE MATERIALIZED VIEW mv_silver_dip4_token_diff TO silver_dip4_token_diff (
+CREATE MATERIALIZED VIEW IF NOT EXISTS mv_silver_dip4_token_diff TO silver_dip4_token_diff (
     block_height                UInt64,
     block_timestamp             DateTime64(9, 'UTC'),
     block_hash                  String,
@@ -409,7 +170,11 @@ FROM diff_kvs
 SETTINGS function_json_value_return_type_allow_nullable = true, function_json_value_return_type_allow_complex = true;
 
 
-CREATE TABLE silver_dip4_public_keys (
+-- ============================================================================
+-- silver_dip4_public_keys + MV
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS silver_dip4_public_keys (
     block_height                UInt64 COMMENT 'The height of the block',
     block_timestamp             DateTime64(9, 'UTC') COMMENT 'The timestamp of the block in UTC',
     block_hash                  String COMMENT 'The hash of the block',
@@ -433,7 +198,7 @@ ORDER BY (block_height, related_receipt_id, account_id)
 SETTINGS index_granularity = 8192;
 
 
-CREATE MATERIALIZED VIEW mv_silver_dip4_public_keys TO silver_dip4_public_keys (
+CREATE MATERIALIZED VIEW IF NOT EXISTS mv_silver_dip4_public_keys TO silver_dip4_public_keys (
     block_height                UInt64,
     block_timestamp             DateTime64(9, 'UTC'),
     block_hash                  String,
@@ -458,7 +223,11 @@ FROM decoded_events
 SETTINGS function_json_value_return_type_allow_nullable = true, function_json_value_return_type_allow_complex = true;
 
 
-CREATE TABLE silver_dip4_intents_executed (
+-- ============================================================================
+-- silver_dip4_intents_executed + MV
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS silver_dip4_intents_executed (
     block_height                UInt64 COMMENT 'The height of the block',
     block_timestamp             DateTime64(9, 'UTC') COMMENT 'The timestamp of the block in UTC',
     block_hash                  String COMMENT 'The hash of the block',
@@ -482,7 +251,7 @@ ORDER BY (block_height, related_receipt_id, intent_hash)
 SETTINGS index_granularity = 8192;
 
 
-CREATE MATERIALIZED VIEW mv_silver_dip4_intents_executed TO silver_dip4_intents_executed (
+CREATE MATERIALIZED VIEW IF NOT EXISTS mv_silver_dip4_intents_executed TO silver_dip4_intents_executed (
     block_height                UInt64,
     block_timestamp             DateTime64(9, 'UTC'),
     block_hash                  String,
@@ -507,7 +276,11 @@ FROM decoded_events
 SETTINGS function_json_value_return_type_allow_nullable = true, function_json_value_return_type_allow_complex = true;
 
 
-CREATE TABLE silver_dip4_fee_changed (
+-- ============================================================================
+-- silver_dip4_fee_changed + MV
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS silver_dip4_fee_changed (
     block_height                UInt64 COMMENT 'The height of the block',
     block_timestamp             DateTime64(9, 'UTC') COMMENT 'The timestamp of the block in UTC',
     block_hash                  String COMMENT 'The hash of the block',
@@ -531,7 +304,7 @@ ORDER BY (block_height, related_receipt_id)
 SETTINGS index_granularity = 8192;
 
 
-CREATE MATERIALIZED VIEW silver_mv_dip4_fee_changed TO silver_dip4_fee_changed (
+CREATE MATERIALIZED VIEW IF NOT EXISTS silver_mv_dip4_fee_changed TO silver_dip4_fee_changed (
     block_height                UInt64,
     block_timestamp             DateTime64(9, 'UTC'),
     block_hash                  String,
@@ -554,92 +327,3 @@ WITH decoded_events AS (
 SELECT block_height, block_timestamp, block_hash, contract_id, execution_status, version, standard, event, related_receipt_id, related_receipt_predecessor_id, related_receipt_receiver_id, coalesce(JSON_VALUE(data_row, '$.old_fee'), '') AS old_fee, coalesce(JSON_VALUE(data_row, '$.new_fee'), '') AS new_fee
 FROM decoded_events
 SETTINGS function_json_value_return_type_allow_nullable = true, function_json_value_return_type_allow_complex = true;
-
-
-CREATE VIEW gold_view_intents_metrics (
-    day Date,
-    symbol String,
-    referral String,
-    blockchain String,
-    transfer_volume Nullable(Float64),
-    deposits Nullable(Float64),
-    withdraws Nullable(Float64),
-    netflow Nullable(Float64)
-) AS
-WITH decoded AS (
-    SELECT DISTINCT e.block_timestamp, e.block_hash, e.event, e.memo, e.old_owner_id, e.new_owner_id, e.token_id,
-           (e.amount / pow(10, a.decimals)) * a.price AS usd_value,
-           a.symbol, a.blockchain, d.referral
-    FROM silver_nep_245_events AS e
-    LEFT JOIN silver_dip4_token_diff AS d ON d.related_receipt_id = e.related_receipt_id
-    LEFT JOIN defuse_assets AS a ON (CAST(e.block_timestamp, 'date') = CAST(a.price_updated_at, 'date')) AND (e.token_id = a.defuse_asset_id)
-    WHERE NOT ((length(referral) = 0) AND (length(memo) = 0))
-)
-SELECT CAST(e.block_timestamp, 'date') AS day, symbol, coalesce(referral, 'Others') AS referral, blockchain,
-       sum(multiIf(e.event = 'mt_transfer', usd_value, NULL)) AS transfer_volume,
-       sum(multiIf(e.event = 'mt_mint', usd_value, NULL)) AS deposits,
-       sum(multiIf(e.event = 'mt_burn', usd_value, NULL)) * -1 AS withdraws,
-       sum(multiIf(e.event = 'mt_mint', usd_value, e.event = 'mt_burn', usd_value * -1, NULL)) AS netflow
-FROM decoded
-WHERE (symbol != '') AND (blockchain != '')
-GROUP BY ALL
-ORDER BY 1 ASC;
-
-
-CREATE TABLE transactions (
-    block_height         UInt64 COMMENT 'The height of the block',
-    block_timestamp      DateTime64(9, 'UTC') COMMENT 'The timestamp of the block in UTC',
-    block_hash           String COMMENT 'The hash of the block',
-    transaction_hash     String COMMENT 'The transaction hash',
-    signer_id            String COMMENT 'The signer account ID',
-    receiver_id          String COMMENT 'The receiver account ID',
-    actions              String COMMENT 'JSON array of actions',
-    INDEX block_timestamp_minmax_idx block_timestamp TYPE minmax GRANULARITY 1,
-    INDEX transaction_hash_bloom_idx transaction_hash TYPE bloom_filter() GRANULARITY 1,
-    INDEX signer_id_bloom_idx signer_id TYPE bloom_filter() GRANULARITY 1,
-    INDEX receiver_id_bloom_idx receiver_id TYPE bloom_filter() GRANULARITY 1
-) ENGINE = ReplacingMergeTree
-PRIMARY KEY (block_height, transaction_hash)
-ORDER BY (block_height, transaction_hash)
-SETTINGS index_granularity = 8192;
-
-
-CREATE TABLE receipts (
-    block_height              UInt64 COMMENT 'The height of the block',
-    block_timestamp           DateTime64(9, 'UTC') COMMENT 'The timestamp of the block in UTC',
-    block_hash                String COMMENT 'The hash of the block',
-    parent_transaction_hash   String COMMENT 'The parent transaction hash',
-    receipt_id                String COMMENT 'The receipt ID',
-    receiver_id               String COMMENT 'The receiver account ID',
-    predecessor_id            String COMMENT 'The predecessor account ID',
-    actions                   String COMMENT 'JSON array of actions',
-    INDEX block_timestamp_minmax_idx block_timestamp TYPE minmax GRANULARITY 1,
-    INDEX receipt_id_bloom_idx receipt_id TYPE bloom_filter() GRANULARITY 1,
-    INDEX receiver_id_bloom_idx receiver_id TYPE bloom_filter() GRANULARITY 1,
-    INDEX predecessor_id_bloom_idx predecessor_id TYPE bloom_filter() GRANULARITY 1,
-    INDEX parent_tx_hash_bloom_idx parent_transaction_hash TYPE bloom_filter() GRANULARITY 1
-) ENGINE = ReplacingMergeTree
-PRIMARY KEY (block_height, receipt_id)
-ORDER BY (block_height, receipt_id)
-SETTINGS index_granularity = 8192;
-
-
-CREATE TABLE execution_outcomes (
-    block_height              UInt64 COMMENT 'The height of the block',
-    block_timestamp           DateTime64(9, 'UTC') COMMENT 'The timestamp of the block in UTC',
-    block_hash                String COMMENT 'The hash of the block',
-    parent_transaction_hash   String COMMENT 'The parent transaction hash',
-    executor_id               String COMMENT 'The executor account ID',
-    receipt_ids               Array(String) COMMENT 'Array of receipt IDs',
-    status                    String COMMENT 'The execution status',
-    logs                      String COMMENT 'JSON array of logs',
-    tokens_burnt              String COMMENT 'Tokens burnt (raw string)',
-    gas_burnt                 UInt64 COMMENT 'Gas burnt',
-    execution_outcome_id      String COMMENT 'The execution outcome ID',
-    INDEX block_timestamp_minmax_idx block_timestamp TYPE minmax GRANULARITY 1,
-    INDEX executor_id_bloom_idx executor_id TYPE bloom_filter() GRANULARITY 1,
-    INDEX parent_tx_hash_bloom_idx parent_transaction_hash TYPE bloom_filter() GRANULARITY 1
-) ENGINE = ReplacingMergeTree
-PRIMARY KEY (block_height, execution_outcome_id)
-ORDER BY (block_height, execution_outcome_id)
-SETTINGS index_granularity = 8192;

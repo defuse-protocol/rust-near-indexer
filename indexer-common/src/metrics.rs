@@ -80,7 +80,7 @@ lazy_static! {
     )
     .unwrap();
     // Exposes build/runtime version as a gauge with value 1; label "version" carries the crate version.
-    pub(crate) static ref VERSION_INFO: IntGaugeVec = register_int_gauge_vec(
+    pub static ref VERSION_INFO: IntGaugeVec = register_int_gauge_vec(
         "indexer_version_info",
         "Indexer binary version info (value always 1, label 'version'=crate version)",
         &["version"]
@@ -114,7 +114,7 @@ async fn get_metrics() -> impl Responder {
     }
 }
 
-pub(crate) fn init_server(port: u16) -> anyhow::Result<actix_web::dev::Server> {
+pub fn init_server(port: u16) -> anyhow::Result<actix_web::dev::Server> {
     tracing::info!(
         target: crate::config::INDEXER,
         "Starting metrics server on http://0.0.0.0:{port}/metrics (no auth)"
@@ -128,7 +128,7 @@ pub(crate) fn init_server(port: u16) -> anyhow::Result<actix_web::dev::Server> {
     Ok(server)
 }
 
-pub(crate) fn init_server_with_basic_auth(
+pub fn init_server_with_basic_auth(
     port: u16,
     basic_auth: (String, String),
 ) -> anyhow::Result<actix_web::dev::Server> {

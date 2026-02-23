@@ -1,21 +1,12 @@
 use clap::Parser;
-#[macro_use]
-extern crate lazy_static;
 
-use crate::config::{AppConfig, init_tracing_with_otel};
-use crate::database::{
+use indexer_common::cache;
+use indexer_common::config::{AppConfig, init_tracing_with_otel};
+use indexer_common::database::{
     get_last_height_events, get_last_height_transactions, init_clickhouse_client,
 };
-
-mod cache;
-mod config;
-mod database;
-mod handlers;
-mod metrics;
-mod types;
-
-pub(crate) const CONTRACT_ACCOUNT_IDS_OF_INTEREST: &[&str] =
-    &["intents.near", "defuse-alpha.near", "staging-intents.near"];
+use indexer_common::handlers;
+use indexer_common::metrics;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -27,7 +18,7 @@ async fn main() -> anyhow::Result<()> {
     init_tracing_with_otel(&config).await?;
 
     // Expose version info metric once
-    crate::metrics::VERSION_INFO
+    indexer_common::metrics::VERSION_INFO
         .with_label_values(&[env!("CARGO_PKG_VERSION")])
         .set(1);
 
@@ -46,7 +37,7 @@ async fn main() -> anyhow::Result<()> {
 
     let start_block = if config.force_from_block_height {
         tracing::warn!(
-            target: crate::config::INDEXER,
+            target: indexer_common::config::INDEXER,
             "Forcing reindex from block height: {}",
             block_height
         );
@@ -56,7 +47,7 @@ async fn main() -> anyhow::Result<()> {
     };
 
     tracing::info!(
-        target: crate::config::INDEXER,
+        target: indexer_common::config::INDEXER,
         "Starting indexer at block height: {}",
         start_block
     );
@@ -78,7 +69,7 @@ async fn main() -> anyhow::Result<()> {
     // Initiate metrics http server
     if config.metrics_basic_auth_user.is_some() && config.metrics_basic_auth_password.is_some() {
         tracing::info!(
-            target: crate::config::INDEXER,
+            target: indexer_common::config::INDEXER,
             "Metrics server basic auth is enabled"
         );
         tokio::spawn(metrics::init_server_with_basic_auth(
@@ -96,7 +87,7 @@ async fn main() -> anyhow::Result<()> {
         )?);
     } else {
         tracing::info!(
-            target: crate::config::INDEXER,
+            target: indexer_common::config::INDEXER,
             "Metrics server basic auth is disabled"
         );
         tokio::spawn(metrics::init_server(config.metrics_server_port)?);

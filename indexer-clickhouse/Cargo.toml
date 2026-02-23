@@ -1,0 +1,18 @@
+[package]
+name = "near-defuse-indexer"
+version = "0.3.0"
+edition = "2024"
+rust-version = "1.90.0"
+
+[[bin]]
+name = "near-defuse-indexer"
+path = "src/main.rs"
+
+[dependencies]
+indexer-common.workspace = true
+anyhow.workspace = true
+blocksapi.workspace = true
+clap.workspace = true
+dotenv.workspace = true
+tokio.workspace = true
+tracing.workspace = true
