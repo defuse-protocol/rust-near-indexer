@@ -12,6 +12,10 @@ pub struct AppConfig {
     #[clap(long, env = "BLOCK_HEIGHT", default_value = "0")]
     pub block_height: u64,
 
+    /// Stop the indexer after processing this block height (env: BLOCK_END)
+    #[clap(long, env = "BLOCK_END")]
+    pub block_end: Option<u64>,
+
     /// Clickhouse server URL (env: CLICKHOUSE_URL)
     #[clap(long, env = "CLICKHOUSE_URL")]
     pub clickhouse_url: String,

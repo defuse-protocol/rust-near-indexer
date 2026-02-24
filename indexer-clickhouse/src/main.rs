@@ -1,11 +1,11 @@
+mod database;
+mod handlers;
+
 use clap::Parser;
 
+use database::{get_last_height_events, get_last_height_transactions, init_clickhouse_client};
 use indexer_common::cache;
 use indexer_common::config::{AppConfig, init_tracing_with_otel};
-use indexer_common::database::{
-    get_last_height_events, get_last_height_transactions, init_clickhouse_client,
-};
-use indexer_common::handlers;
 use indexer_common::metrics;
 
 #[tokio::main]

@@ -1,4 +1,3 @@
-use clickhouse::Row;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -22,7 +21,8 @@ impl std::fmt::Display for ReceiptOrDataId {
 // Creating type aliases to make HashMap types for cache more explicit
 pub type ParentTransactionHashString = String;
 
-#[derive(Row, Serialize)]
+#[cfg_attr(feature = "clickhouse", derive(clickhouse::Row))]
+#[derive(Serialize)]
 pub struct EventRow {
     pub block_height: u64,
     pub block_timestamp: u64,
@@ -49,7 +49,8 @@ pub struct EventJson {
     pub data: Value,
 }
 
-#[derive(Row, Serialize)]
+#[cfg_attr(feature = "clickhouse", derive(clickhouse::Row))]
+#[derive(Serialize)]
 pub struct TransactionRow {
     pub block_height: u64,
     pub block_timestamp: u64,
@@ -60,7 +61,8 @@ pub struct TransactionRow {
     pub actions: String,
 }
 
-#[derive(Row, Serialize)]
+#[cfg_attr(feature = "clickhouse", derive(clickhouse::Row))]
+#[derive(Serialize)]
 pub struct ReceiptRow {
     pub block_height: u64,
     pub block_timestamp: u64,
@@ -72,7 +74,8 @@ pub struct ReceiptRow {
     pub actions: String,
 }
 
-#[derive(Row, Serialize)]
+#[cfg_attr(feature = "clickhouse", derive(clickhouse::Row))]
+#[derive(Serialize)]
 pub struct ExecutionOutcomeRow {
     pub block_height: u64,
     pub block_timestamp: u64,

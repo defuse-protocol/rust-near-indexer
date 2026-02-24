@@ -1853,8 +1853,8 @@ dependencies = [
  "anyhow",
  "blocksapi",
  "clap",
- "clickhouse",
  "futures",
+ "indexer-primitives",
  "lazy_static",
  "opentelemetry",
  "opentelemetry-otlp",
@@ -1865,11 +1865,20 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
- "tokio-retry",
- "tokio-stream",
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "indexer-primitives"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "blocksapi",
+ "clickhouse",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -2204,10 +2213,17 @@ dependencies = [
  "anyhow",
  "blocksapi",
  "clap",
+ "clickhouse",
  "dotenv",
+ "futures",
  "indexer-common",
+ "indexer-primitives",
+ "serde",
  "tokio",
+ "tokio-retry",
+ "tokio-stream",
  "tracing",
+ "tracing-opentelemetry",
 ]
 
 [[package]]

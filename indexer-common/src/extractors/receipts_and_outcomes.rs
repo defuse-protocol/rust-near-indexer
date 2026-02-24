@@ -1,4 +1,4 @@
-//! Single-pass receipt + execution outcome handler.
+//! Single-pass receipt + execution outcome extractor.
 //!
 //! Goal: iterate execution outcomes exactly once and during that traversal produce:
 //!  * ExecutionOutcome rows (for outcomes whose originating receipt we can map to a tx)
@@ -18,153 +18,28 @@
 //!  * Per-element async fan-out (simple synchronous loop is cheaper & sufficient here).
 //!
 //! Observability:
-//!  * A single span wraps collection; inserts still have individual spans.
+//!  * A single span wraps collection.
 //!  * Promotions / potential misses logged at info/debug for cache tuning.
 //!
 //! Metrics:
 //!  * Totals/captured metrics preserved for continuity.
 //!  * Potential misses still increment POTENTIAL_ASSET_MISS_TOTAL.
 //!
-//! Error handling:
-//!  * DB insertion errors log and increment STORE_ERRORS_TOTAL; handler returns early.
-//!
 //! Keep inline comments focused on cache edge cases; names should explain everything else.
 
 use blocksapi::near_indexer_primitives::{self, near_primitives};
 use futures::StreamExt;
-use tracing::Instrument;
 
-use crate::{cache, handlers::events::parse_status, types};
+use crate::{cache, extractors::events::parse_status, types};
 
-pub(crate) const EXECUTION_OUTCOMES_CLICKHOUSE_TABLE: &str = "execution_outcomes";
-pub(crate) const RECEIPTS_CLICKHOUSE_TABLE: &str = "receipts";
-
-#[tracing::instrument(
-    name = "handle_receipts_and_outcomes",
-    skip(message, client, receipts_cache_arc),
-    fields(block_height = message.block.header.height)
-)]
-pub async fn handle_receipts_and_outcomes(
-    message: &near_indexer_primitives::StreamerMessage,
-    client: &clickhouse::Client,
-    receipts_cache_arc: cache::ReceiptsCacheArc,
-    outcome_concurrency: usize,
-) -> anyhow::Result<()> {
-    // Single pass: iterate execution outcomes once; build outcome rows and needed receipt rows.
-    let single_pass_span = tracing::debug_span!("single_pass_collect");
-    let (execution_outcomes, receipts) =
-        collect_outcomes_and_receipts(message, receipts_cache_arc.clone(), outcome_concurrency)
-            .instrument(single_pass_span)
-            .await?;
-
-    crate::metrics::ASSETS_IN_BLOCK_TOTAL
-        .with_label_values(&["execution_outcomes"])
-        .set(
-            message
-                .shards
-                .iter()
-                .map(|shard| shard.receipt_execution_outcomes.len() as i64)
-                .sum(),
-        );
-    crate::metrics::ASSETS_IN_BLOCK_CAPTURED_TOTAL
-        .with_label_values(&["execution_outcomes"])
-        .set(execution_outcomes.len() as i64);
-    crate::metrics::ASSETS_IN_BLOCK_TOTAL
-        .with_label_values(&["receipts"])
-        .set(
-            message
-                .shards
-                .iter()
-                .filter_map(|s| s.chunk.as_ref())
-                .map(|c| c.receipts.len() as i64)
-                .sum(),
-        );
-    crate::metrics::ASSETS_IN_BLOCK_CAPTURED_TOTAL
-        .with_label_values(&["receipts"])
-        .set(receipts.len() as i64);
-
-    // Insert both batches concurrently (skip empty to avoid pointless spans)
-    let insert_span = tracing::debug_span!(
-        "insert_batches",
-        execution_outcomes_count = execution_outcomes.len(),
-        receipts_count = receipts.len()
-    );
-    let exec_span = tracing::debug_span!(
-        "insert_execution_outcomes_to_db",
-        count = execution_outcomes.len()
-    );
-    let exec_task = async move {
-        if execution_outcomes.is_empty() {
-            return Ok::<_, anyhow::Error>(());
-        }
-        if let Err(err) = crate::database::insert_rows(
-            client,
-            EXECUTION_OUTCOMES_CLICKHOUSE_TABLE,
-            &execution_outcomes,
-        )
-        .await
-        {
-            crate::metrics::STORE_ERRORS_TOTAL.inc();
-            tracing::error!(
-                target: crate::config::INDEXER,
-                error=%err,
-                debug=?err,
-                "Failed to insert execution outcomes"
-            );
-            return Err(anyhow::anyhow!("execution_outcomes insert failed: {err}"));
-        }
-        Ok(())
-    }
-    .instrument(exec_span);
-
-    let receipts_span = tracing::debug_span!("insert_receipts_to_db", count = receipts.len());
-    let receipts_task = async move {
-        if receipts.is_empty() {
-            return Ok::<_, anyhow::Error>(());
-        }
-        if let Err(err) =
-            crate::database::insert_rows(client, RECEIPTS_CLICKHOUSE_TABLE, &receipts).await
-        {
-            crate::metrics::STORE_ERRORS_TOTAL.inc();
-            tracing::error!(
-                target: crate::config::INDEXER,
-                error=%err,
-                debug=?err,
-                "Failed to insert receipts"
-            );
-            return Err(anyhow::anyhow!("receipts insert failed: {err}"));
-        }
-        Ok(())
-    }
-    .instrument(receipts_span);
-
-    if let Err(err) = (async { tokio::try_join!(exec_task, receipts_task) })
-        .instrument(insert_span)
-        .await
-    {
-        tracing::error!(
-            target: crate::config::INDEXER,
-            error=%err,
-            "Failed inserting batches"
-        );
-        return Err(err);
-    }
-
-    tracing::debug!(
-        target: crate::config::INDEXER,
-        "handle_receipts_and_outcomes completed"
-    );
-    Ok(())
-}
-
-// === Single-pass collection ===
-
+/// Collect execution outcome and receipt rows from the StreamerMessage in a single pass.
+/// Returns (ExecutionOutcomeRows, ReceiptRows).
 #[tracing::instrument(
     name = "collect_outcomes_and_receipts",
     skip(message, receipts_cache_arc),
     fields(block_height = message.block.header.height)
 )]
-async fn collect_outcomes_and_receipts(
+pub async fn collect_outcomes_and_receipts(
     message: &near_indexer_primitives::StreamerMessage,
     receipts_cache_arc: cache::ReceiptsCacheArc,
     outcome_concurrency: usize,
@@ -205,6 +80,32 @@ async fn collect_outcomes_and_receipts(
         }
     }
 
+    crate::metrics::ASSETS_IN_BLOCK_TOTAL
+        .with_label_values(&["execution_outcomes"])
+        .set(
+            message
+                .shards
+                .iter()
+                .map(|shard| shard.receipt_execution_outcomes.len() as i64)
+                .sum(),
+        );
+    crate::metrics::ASSETS_IN_BLOCK_CAPTURED_TOTAL
+        .with_label_values(&["execution_outcomes"])
+        .set(outcomes_rows.len() as i64);
+    crate::metrics::ASSETS_IN_BLOCK_TOTAL
+        .with_label_values(&["receipts"])
+        .set(
+            message
+                .shards
+                .iter()
+                .filter_map(|s| s.chunk.as_ref())
+                .map(|c| c.receipts.len() as i64)
+                .sum(),
+        );
+    crate::metrics::ASSETS_IN_BLOCK_CAPTURED_TOTAL
+        .with_label_values(&["receipts"])
+        .set(receipt_rows.len() as i64);
+
     tracing::debug!(
         target: crate::config::INDEXER,
         outcomes = outcomes_rows.len(),
@@ -232,7 +133,7 @@ async fn process_single_outcome(
     match parent_tx_opt {
         Some(parent_tx_hash) => {
             // If the outcome/receipt touches accounts of interest, we build rows
-            if super::any_account_id_of_interest(&[
+            if crate::any_account_id_of_interest(&[
                 outcome.receipt.receiver_id.as_str(),
                 outcome.receipt.predecessor_id.as_str(),
             ]) {
@@ -379,7 +280,7 @@ async fn find_parent_tx_hash(
                 parent_tx_opt = Some(p.clone());
 
                 // Promotion condition: outcome/receipt touches accounts of interest
-                if super::any_account_id_of_interest(&[
+                if crate::any_account_id_of_interest(&[
                     outcome.receipt.receiver_id.as_str(),
                     outcome.receipt.predecessor_id.as_str(),
                 ]) {

@@ -34,47 +34,47 @@ fn register_int_gauge_vec(
 }
 
 lazy_static! {
-    pub(crate) static ref BLOCK_PROCESSED_TOTAL: IntCounter = try_create_int_counter(
+    pub static ref BLOCK_PROCESSED_TOTAL: IntCounter = try_create_int_counter(
         "total_blocks_processed",
         "Total number of blocks processed by indexer regardless of restarts. Used to calculate Block Processing Rate(BPS)"
     )
     .unwrap();
-    pub(crate) static ref LATEST_BLOCK_HEIGHT: IntGauge = try_create_int_gauge(
+    pub static ref LATEST_BLOCK_HEIGHT: IntGauge = try_create_int_gauge(
         "latest_block_height",
         "Last seen block height by indexer"
     )
     .unwrap();
 
-    pub(crate) static ref ASSETS_IN_BLOCK_TOTAL: IntGaugeVec = register_int_gauge_vec(
+    pub static ref ASSETS_IN_BLOCK_TOTAL: IntGaugeVec = register_int_gauge_vec(
         "assets_in_block_total",
         "Total number of assets in the processed block",
         &["asset_type"] // This declares a label named `asset_type`
     ).unwrap();
 
-    pub(crate) static ref ASSETS_IN_BLOCK_CAPTURED_TOTAL: IntGaugeVec = register_int_gauge_vec(
+    pub static ref ASSETS_IN_BLOCK_CAPTURED_TOTAL: IntGaugeVec = register_int_gauge_vec(
         "assets_in_block_captured_total",
         "Total number of captured assets in the processed block",
         &["asset_type"] // This declares a label named `asset_type`
     ).unwrap();
 
-    pub(crate) static ref POTENTIAL_ASSET_MISS_TOTAL: IntGaugeVec = register_int_gauge_vec(
+    pub static ref POTENTIAL_ASSET_MISS_TOTAL: IntGaugeVec = register_int_gauge_vec(
         "potential_asset_miss_total",
         "Total number of potential asset misses",
         &["asset_type"] // This declares a label named `asset_type`
     ).unwrap();
 
-    pub(crate) static ref PROMOTIONS_TOTAL: IntGaugeVec = register_int_gauge_vec(
+    pub static ref PROMOTIONS_TOTAL: IntGaugeVec = register_int_gauge_vec(
         "promotions_total",
         "Total number of cache promotions from potential to main",
         &["asset_type"]
     ).unwrap();
 
-    pub(crate) static ref STORE_ERRORS_TOTAL: IntCounter = try_create_int_counter(
+    pub static ref STORE_ERRORS_TOTAL: IntCounter = try_create_int_counter(
         "total_tx_store_errors",
         "Total number of errors while storing transactions"
     )
     .unwrap();
-    pub(crate) static ref DATABASE_INSERT_RETRIES_TOTAL: IntCounter = try_create_int_counter(
+    pub static ref DATABASE_INSERT_RETRIES_TOTAL: IntCounter = try_create_int_counter(
         "database_insert_retries_total",
         "Total number of retry attempts for database inserts"
     )

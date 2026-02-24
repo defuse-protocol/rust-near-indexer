@@ -41,6 +41,11 @@ Three accounts are tracked: `intents.near`, `defuse-alpha.near`, `staging-intent
 
 **DO NOT** mix these. Never add `staging-intents.near` to a production `silver_*` MV filter, and never add production accounts to `staging_silver_*` MVs. Getting this wrong corrupts production analytics data.
 
+## Validation Scripts
+- `scripts/validate.sh` — single-instance integrity checks (completeness, referential integrity, account filtering, JSON validity)
+- `scripts/cross-validate.sh` — compares local vs production ClickHouse for a block range using aggregate fingerprints (`count()` + `groupBitXor(cityHash64(...))`) on all core + silver tables. Drills down on mismatches.
+- Both use `curl` against ClickHouse HTTP interface with CLI flags for connection params.
+
 ## Conventions
 - No tests exist yet
 - Env config via clap (see `indexer-common/src/config.rs`)

@@ -1,79 +1,28 @@
-// Removed explicit Instant timings; spans provide durations.
-
 use blocksapi::near_indexer_primitives;
 
-use crate::{cache, handlers::events::parse_status, types};
+use crate::{cache, extractors::events::parse_status, types};
 use tokio::try_join;
 
-const TRANSACTIONS_CLICKHOUSE_TABLE: &str = "transactions";
-
 /// Extract transactions and their execution outcomes from the StreamerMessage,
-/// store transactions and transaction execution outcomes in Clickhouse, and update the receipts cache with
-/// mappings from receipt IDs to their parent transaction hashes.
-/// This function processes only transactions related to accounts of interest.
-/// It uses the provided Clickhouse client for database operations and
-/// a shared receipts cache to maintain the relationship between receipts and transactions.
-///
-/// Note: Execution Outcomes for Receipts are handled separately in `handlers/execution_outcomes.rs`.
+/// updating the receipts cache with mappings from receipt IDs to their parent transaction hashes.
+/// Returns (TransactionRows, ExecutionOutcomeRows).
 #[tracing::instrument(
-    name = "handle_transactions",
-    skip(message, client, receipts_cache_arc),
+    name = "extract_transactions_and_outcomes",
+    skip(message, receipts_cache_arc),
     fields(block_height = message.block.header.height)
 )]
-pub async fn handle_transactions(
+pub async fn extract_transactions(
     message: &near_indexer_primitives::StreamerMessage,
-    client: &clickhouse::Client,
     receipts_cache_arc: cache::ReceiptsCacheArc,
-) -> anyhow::Result<()> {
-    let (transactions, transaction_execution_outcomes) = {
-        let _span = tracing::debug_span!("extract_transactions_and_outcomes").entered();
-        try_join!(
-            extract_transactions(message, receipts_cache_arc.clone()),
-            extract_transaction_execution_outcomes(message)
-        )?
-    };
-
-    let result = {
-        let _span = tracing::debug_span!(
-            "insert_transactions_to_db",
-            transactions_count = transactions.len(),
-            execution_outcomes_count = transaction_execution_outcomes.len()
-        )
-        .entered();
-
-        match try_join!(
-            crate::database::insert_rows(client, TRANSACTIONS_CLICKHOUSE_TABLE, &transactions,),
-            crate::database::insert_rows(
-                client,
-                super::receipts_and_outcomes::EXECUTION_OUTCOMES_CLICKHOUSE_TABLE,
-                &transaction_execution_outcomes,
-            )
-        ) {
-            Ok((_res_transactions, _res_execution_outcomes)) => Ok(()),
-            Err(err) => {
-                crate::metrics::STORE_ERRORS_TOTAL.inc();
-                tracing::error!(
-                    target: crate::config::INDEXER,
-                    "Error during try_join for database inserts: {}",
-                    err
-                );
-                anyhow::bail!(
-                    "Failed to insert transactions or execution outcomes into Clickhouse: {}",
-                    err
-                )
-            }
-        }
-    };
-
-    tracing::debug!(
-        target: crate::config::INDEXER,
-        "handle_transactions completed"
-    );
-    result
+) -> anyhow::Result<(Vec<types::TransactionRow>, Vec<types::ExecutionOutcomeRow>)> {
+    try_join!(
+        extract_transaction_rows(message, receipts_cache_arc.clone()),
+        extract_transaction_execution_outcomes(message)
+    )
 }
 
-// Extract transactions from the StreamerMessage and update the receipts cache
-async fn extract_transactions(
+/// Extract transaction rows from the StreamerMessage and update the receipts cache.
+async fn extract_transaction_rows(
     message: &near_indexer_primitives::StreamerMessage,
     receipts_cache_arc: cache::ReceiptsCacheArc,
 ) -> anyhow::Result<Vec<types::TransactionRow>> {
@@ -87,7 +36,7 @@ async fn extract_transactions(
         .filter_map(|shard| shard.chunk.as_ref())
         .flat_map(|chunk| chunk.transactions.iter().map(Clone::clone))
         .map(|tx| {
-            parse_transactions(
+            parse_transaction(
                 tx,
                 block_height,
                 block_timestamp,
@@ -122,9 +71,9 @@ async fn extract_transactions(
     Ok(transactions)
 }
 
-// Parse a transaction and update the receipts cache if it's related to accounts of interest
-// Also updates the potential cache for transactions not directly related to accounts of interest
-async fn parse_transactions(
+/// Parse a transaction and update the receipts cache if it's related to accounts of interest.
+/// Also updates the potential cache for transactions not directly related to accounts of interest.
+async fn parse_transaction(
     tx: near_indexer_primitives::IndexerTransactionWithOutcome,
     block_height: u64,
     block_timestamp: u64,
@@ -140,7 +89,7 @@ async fn parse_transactions(
         .first()
         .expect("`receipt_ids` must contain one Receipt Id");
 
-    if super::any_account_id_of_interest(&[
+    if crate::any_account_id_of_interest(&[
         tx.transaction.signer_id.as_str(),
         tx.transaction.receiver_id.as_str(),
     ]) {
@@ -192,7 +141,7 @@ async fn parse_transactions(
 }
 
 // Extract transaction execution outcomes from the StreamerMessage
-// This is separate from receipt execution outcomes handled in execution_outcomes.rs
+// This is separate from receipt execution outcomes handled in receipts_and_outcomes.rs
 async fn extract_transaction_execution_outcomes(
     message: &near_indexer_primitives::StreamerMessage,
 ) -> anyhow::Result<Vec<types::ExecutionOutcomeRow>> {
@@ -227,14 +176,14 @@ async fn extract_transaction_execution_outcomes(
     Ok(execution_outcomes)
 }
 
-// Parse a transaction execution outcome and return an ExecutionOutcomeRow if it's related to accounts of interest
+/// Parse a transaction execution outcome and return an ExecutionOutcomeRow if it's related to accounts of interest.
 async fn parse_transaction_execution_outcome(
     tx: near_indexer_primitives::IndexerTransactionWithOutcome,
     block_height: u64,
     block_timestamp: u64,
     block_hash: String,
 ) -> Option<types::ExecutionOutcomeRow> {
-    if super::any_account_id_of_interest(&[
+    if crate::any_account_id_of_interest(&[
         tx.transaction.signer_id.as_str(),
         tx.transaction.receiver_id.as_str(),
     ]) {

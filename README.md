@@ -171,6 +171,43 @@ Key questions the tracing helps answer:
 
 For detailed tracing documentation, see [TRACING.md](./TRACING.md).
 
+## Validation Scripts
+
+Two bash scripts in `scripts/` use `curl` against the ClickHouse HTTP interface to validate indexed data.
+
+### `scripts/validate.sh` — Single-instance integrity checks
+
+Runs against one ClickHouse instance and checks:
+- **Completeness** — tables have rows, block height ranges are consistent
+- **Cache misses** — events with null `tx_hash` are below 5%
+- **Referential integrity** — all receipt/outcome `parent_transaction_hash` values exist in `transactions`
+- **Account filtering** — events only from the three accounts of interest
+- **JSON validity** — serialized columns (`actions`, `logs`) contain valid JSON
+
+```bash
+./scripts/validate.sh --url http://localhost:8123 --user indexer --password indexer --database default
+```
+
+### `scripts/cross-validate.sh` — Compare local vs production
+
+Compares two ClickHouse instances over a shared block range. For each table it computes:
+- `count()` — catches missing or extra rows
+- `groupBitXor(cityHash64(pk_columns))` — PK-level checksum (order-independent)
+- `groupBitXor(cityHash64(all_columns))` — full row checksum (catches content divergence)
+
+All queries use `SELECT ... FROM <table> FINAL` to force ReplacingMergeTree deduplication.
+
+Covers all 4 core tables (`transactions`, `receipts`, `execution_outcomes`, `events`) and all 5 silver tables. On mismatch, drills down to per-block row counts and prints sample rows from the first diverging block.
+
+```bash
+./scripts/cross-validate.sh \
+  --local-url http://localhost:8123 --local-user indexer --local-password indexer --local-database default \
+  --prod-url https://prod:8443 --prod-user user --prod-password "$PROD_PW" --prod-database default \
+  --block-start 168545460 --block-end 168545523
+```
+
+Exit code: `0` = all match, `1` = mismatch found.
+
 ## Project Structure
 
 This is a Cargo workspace:
@@ -188,6 +225,9 @@ This is a Cargo workspace:
 ├── indexer-clickhouse/      # Binary crate (near-defuse-indexer)
 │   └── src/main.rs          # Entry point
 ├── clickhouse/init/         # ClickHouse schema (auto-applied by docker-compose)
+├── scripts/
+│   ├── validate.sh          # Single-instance data integrity checks
+│   └── cross-validate.sh    # Cross-validate local vs production
 ├── docker-compose.yml       # Local ClickHouse + Redis
 └── docker-compose.tracing.yml  # Jaeger for OpenTelemetry tracing
 ```

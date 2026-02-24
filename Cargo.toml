@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "indexer-primitives",
     "indexer-common",
     "indexer-clickhouse",
 ]
@@ -12,7 +13,6 @@ actix-web-httpauth = "0.8.2"
 anyhow = "1.0.51"
 blocksapi = { git = "https://github.com/defuse-protocol/blocksapi-rs.git", tag = "v0.2.0" }
 clap = { version = "4.5", features = ["derive", "env"] }
-clickhouse = { version = "0.13.2", features = ["rustls-tls", "inserter"] }
 dotenv = "0.15.0"
 futures = "0.3.5"
 lazy_static = "1.4.0"
@@ -32,4 +32,5 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-opentelemetry = "0.20.0"
 
 # Internal crates
+indexer-primitives = { path = "indexer-primitives" }
 indexer-common = { path = "indexer-common" }

@@ -5,7 +5,7 @@ services:
       - "8123:8123"   # HTTP interface
       - "9000:9000"   # Native protocol
     environment:
-      CLICKHOUSE_DB: indexer
+      CLICKHOUSE_DB: default
       CLICKHOUSE_USER: indexer
       CLICKHOUSE_PASSWORD: indexer
     volumes:
