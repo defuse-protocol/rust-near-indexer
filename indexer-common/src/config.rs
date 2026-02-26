@@ -36,9 +36,22 @@ pub async fn init_tracing_with_otel(otel: Option<&OtelConfig>) -> anyhow::Result
     );
 
     if let Some(otel_config) = otel {
+        // Log only scheme+host to avoid leaking auth tokens in the endpoint URL
+        let redacted = otel_config
+            .endpoint
+            .find("://")
+            .map(|scheme_end| {
+                let after_scheme = &otel_config.endpoint[..scheme_end + 3];
+                let rest = &otel_config.endpoint[scheme_end + 3..];
+                let host_end = rest
+                    .find(['/', '?', ':'])
+                    .unwrap_or(rest.len());
+                format!("{}{}", after_scheme, &rest[..host_end])
+            })
+            .unwrap_or_else(|| "<invalid URL>".to_string());
         eprintln!(
             "Initializing OpenTelemetry tracing with endpoint: {}",
-            otel_config.endpoint
+            redacted
         );
 
         let tracer = opentelemetry_otlp::new_pipeline()
@@ -68,13 +81,13 @@ pub async fn init_tracing_with_otel(otel: Option<&OtelConfig>) -> anyhow::Result
             .with(env_filter)
             .with(tracing_subscriber::fmt::layer())
             .with(telemetry)
-            .init();
+            .try_init()?;
     } else {
         eprintln!("OpenTelemetry endpoint not configured, using default tracing");
         tracing_subscriber::registry()
             .with(env_filter)
             .with(tracing_subscriber::fmt::layer())
-            .init();
+            .try_init()?;
     }
 
     Ok(())

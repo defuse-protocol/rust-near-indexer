@@ -73,7 +73,8 @@ pg_query() {
 }
 
 ch_prod() {
-    curl -sS "${PROD_URL}/?user=${PROD_USER}&password=${PROD_PASSWORD}&database=${PROD_DATABASE}" \
+    curl -sS "${PROD_URL}/?database=${PROD_DATABASE}" \
+        --user "${PROD_USER}:${PROD_PASSWORD}" \
         --data-binary "$1"
 }
 

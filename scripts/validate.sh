@@ -41,7 +41,8 @@ done
 FAILURES=0
 
 ch_query() {
-    curl -sS "${CH_URL}/?user=${CH_USER}&password=${CH_PASSWORD}&database=${CH_DATABASE}" \
+    curl -sS "${CH_URL}/?database=${CH_DATABASE}" \
+        --user "${CH_USER}:${CH_PASSWORD}" \
         --data-binary "$1"
 }
 
@@ -123,16 +124,18 @@ echo "── Cache miss checks ──"
 NULL_TX_COUNT="$(ch_query "SELECT count(*) FROM events WHERE tx_hash IS NULL" | tr -d '[:space:]')"
 TOTAL_EVENTS="$(ch_query "SELECT count(*) FROM events" | tr -d '[:space:]')"
 if [[ "$TOTAL_EVENTS" -gt 0 ]]; then
-    NULL_PCT=$(( NULL_TX_COUNT * 100 / TOTAL_EVENTS ))
+    # Use cross-multiplication to avoid integer division truncating to 0:
+    # NULL_TX_COUNT / TOTAL_EVENTS <= 5/100  ⟺  NULL_TX_COUNT * 100 <= 5 * TOTAL_EVENTS
+    if (( NULL_TX_COUNT * 100 <= 5 * TOTAL_EVENTS )); then
+        NULL_PCT=$(awk "BEGIN { printf \"%.1f\", ($NULL_TX_COUNT * 100.0 / $TOTAL_EVENTS) }")
+        echo "  PASS  events with null tx_hash: $NULL_TX_COUNT/$TOTAL_EVENTS (${NULL_PCT}%)"
+    else
+        NULL_PCT=$(awk "BEGIN { printf \"%.1f\", ($NULL_TX_COUNT * 100.0 / $TOTAL_EVENTS) }")
+        echo "  FAIL  events with null tx_hash: $NULL_TX_COUNT/$TOTAL_EVENTS (${NULL_PCT}% — expected <= 5%)"
+        FAILURES=$((FAILURES + 1))
+    fi
 else
-    NULL_PCT=0
-fi
-
-if (( NULL_PCT <= 5 )); then
-    echo "  PASS  events with null tx_hash: $NULL_TX_COUNT/$TOTAL_EVENTS (${NULL_PCT}%)"
-else
-    echo "  FAIL  events with null tx_hash: $NULL_TX_COUNT/$TOTAL_EVENTS (${NULL_PCT}% — expected <= 5%)"
-    FAILURES=$((FAILURES + 1))
+    echo "  PASS  events with null tx_hash: 0/0 (no events)"
 fi
 
 # ── 4. Correctness: referential integrity ───────────────────────────────────

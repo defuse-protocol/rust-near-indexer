@@ -36,7 +36,7 @@ cp .env.example .env
 # Edit .env — set BLOCKSAPI_SERVER_ADDR and BLOCKSAPI_TOKEN
 
 # Build & run
-cargo run --release
+cargo run --release --bin near-defuse-indexer
 
 # Verify schema was created
 docker compose exec clickhouse clickhouse-client \
@@ -91,13 +91,13 @@ Prerequisites
 Basic run (development / single-run):
 
 ```bash
-cargo run --release
+cargo run --release --bin near-defuse-indexer
 ```
 
 Override the start block on the fly:
 
 ```bash
-BLOCK_HEIGHT=130636886 cargo run --release
+BLOCK_HEIGHT=130636886 cargo run --release --bin near-defuse-indexer
 ```
 
 Deployment suggestions
@@ -213,23 +213,13 @@ Exit code: `0` = all match, `1` = mismatch found.
 This is a Cargo workspace:
 
 ```
-├── indexer-common/          # Shared library crate (indexer_common)
-│   └── src/
-│       ├── lib.rs           # Re-exports, CONTRACT_ACCOUNT_IDS_OF_INTEREST
-│       ├── config.rs        # AppConfig (env vars via clap), OpenTelemetry init
-│       ├── database.rs      # ClickHouse client, insert with exponential backoff
-│       ├── types.rs         # Row types, Action enum
-│       ├── metrics.rs       # Prometheus metrics server
-│       ├── handlers/        # Event handling (events, receipts, transactions, outcomes)
-│       └── cache/           # Redis receipt cache (two-tier: main + potential)
-├── indexer-clickhouse/      # Binary crate (near-defuse-indexer)
-│   └── src/main.rs          # Entry point
-├── clickhouse/init/         # ClickHouse schema (auto-applied by docker-compose)
-├── scripts/
-│   ├── validate.sh          # Single-instance data integrity checks
-│   └── cross-validate.sh    # Cross-validate local vs production
-├── docker-compose.yml       # Local ClickHouse + Redis
-└── docker-compose.tracing.yml  # Jaeger for OpenTelemetry tracing
+├── indexer-primitives/       # Shared types crate (row structs, Action, EventJson)
+├── indexer-common/           # Shared logic: extractors, cache, config, metrics
+├── indexer-clickhouse/       # ClickHouse indexer binary (near-defuse-indexer)
+├── indexer-postgres/         # PostgreSQL indexer binary (indexer-postgres)
+├── clickhouse/init/          # ClickHouse schema (auto-applied by docker-compose)
+├── scripts/                  # Validation scripts (validate, cross-validate, cross-validate-pg)
+├── docker-compose.yml        # Local ClickHouse + Redis + Postgres
 ```
 
 Editing and extending

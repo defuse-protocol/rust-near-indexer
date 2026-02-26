@@ -74,16 +74,23 @@ if ! [[ "$BLOCK_END" =~ ^[0-9]+$ ]]; then
     exit 1
 fi
 
+if (( BLOCK_START > BLOCK_END )); then
+    echo "Error: --block-start ($BLOCK_START) must be <= --block-end ($BLOCK_END)"
+    exit 1
+fi
+
 FAILURES=0
 
 # ── Query helpers ─────────────────────────────────────────────────────────────
 ch_local() {
-    curl -sS "${LOCAL_URL}/?user=${LOCAL_USER}&password=${LOCAL_PASSWORD}&database=${LOCAL_DATABASE}" \
+    curl -sS "${LOCAL_URL}/?database=${LOCAL_DATABASE}" \
+        --user "${LOCAL_USER}:${LOCAL_PASSWORD}" \
         --data-binary "$1"
 }
 
 ch_prod() {
-    curl -sS "${PROD_URL}/?user=${PROD_USER}&password=${PROD_PASSWORD}&database=${PROD_DATABASE}" \
+    curl -sS "${PROD_URL}/?database=${PROD_DATABASE}" \
+        --user "${PROD_USER}:${PROD_PASSWORD}" \
         --data-binary "$1"
 }
 

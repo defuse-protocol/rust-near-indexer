@@ -15,7 +15,7 @@ cargo build --release
 
 # Run ClickHouse indexer (needs BLOCKSAPI_SERVER_ADDR + BLOCKSAPI_TOKEN in .env)
 cp .env.example .env  # then edit
-cargo run --release --bin indexer-clickhouse
+cargo run --release --bin near-defuse-indexer
 
 # Run Postgres indexer (needs POSTGRES_URL in addition to BlocksAPI env vars)
 cargo run --release --bin indexer-postgres

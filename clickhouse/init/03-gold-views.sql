@@ -20,11 +20,11 @@ WITH decoded AS (
     LEFT JOIN defuse_assets AS a ON (CAST(e.block_timestamp, 'date') = CAST(a.price_updated_at, 'date')) AND (e.token_id = a.defuse_asset_id)
     WHERE NOT ((length(referral) = 0) AND (length(memo) = 0))
 )
-SELECT CAST(e.block_timestamp, 'date') AS day, symbol, coalesce(referral, 'Others') AS referral, blockchain,
-       sum(multiIf(e.event = 'mt_transfer', usd_value, NULL)) AS transfer_volume,
-       sum(multiIf(e.event = 'mt_mint', usd_value, NULL)) AS deposits,
-       sum(multiIf(e.event = 'mt_burn', usd_value, NULL)) * -1 AS withdraws,
-       sum(multiIf(e.event = 'mt_mint', usd_value, e.event = 'mt_burn', usd_value * -1, NULL)) AS netflow
+SELECT CAST(block_timestamp, 'date') AS day, symbol, coalesce(referral, 'Others') AS referral, blockchain,
+       sum(multiIf(event = 'mt_transfer', usd_value, NULL)) AS transfer_volume,
+       sum(multiIf(event = 'mt_mint', usd_value, NULL)) AS deposits,
+       sum(multiIf(event = 'mt_burn', usd_value, NULL)) * -1 AS withdraws,
+       sum(multiIf(event = 'mt_mint', usd_value, event = 'mt_burn', usd_value * -1, NULL)) AS netflow
 FROM decoded
 WHERE (symbol != '') AND (blockchain != '')
 GROUP BY ALL
