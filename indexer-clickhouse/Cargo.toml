@@ -1,8 +1,8 @@
 [package]
 name = "near-defuse-indexer"
-version = "0.3.0"
-edition = "2024"
-rust-version = "1.90.0"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 
 [[bin]]
 name = "near-defuse-indexer"

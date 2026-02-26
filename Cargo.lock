@@ -2036,7 +2036,7 @@ checksum = "e8a5a9a0ff0086c7a148acb942baaabeadf9504d10400b5a05645853729b9cd2"
 
 [[package]]
 name = "indexer-common"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "actix-web",
  "actix-web-httpauth",
@@ -2061,7 +2061,7 @@ dependencies = [
 
 [[package]]
 name = "indexer-postgres"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "blocksapi",
@@ -2082,7 +2082,7 @@ dependencies = [
 
 [[package]]
 name = "indexer-primitives"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "blocksapi",
@@ -2458,7 +2458,7 @@ dependencies = [
 
 [[package]]
 name = "near-defuse-indexer"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "blocksapi",
