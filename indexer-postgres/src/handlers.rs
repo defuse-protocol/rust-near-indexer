@@ -1,21 +1,19 @@
 use std::time::Instant;
 
-use clickhouse::Client;
 use futures::StreamExt;
+use sqlx::PgPool;
 use tokio_stream::wrappers::ReceiverStream;
 
 use blocksapi::near_indexer_primitives::StreamerMessage;
 
 use indexer_common::cache;
-use crate::config::AppConfig;
+use indexer_common::extractors;
 
-mod events;
-mod receipts_and_outcomes;
-mod transactions;
+use crate::config::AppConfig;
 
 pub async fn handle_stream(
     config: blocksapi::BlocksApiConfig,
-    client: Client,
+    pool: PgPool,
     receipts_cache_arc: cache::ReceiptsCacheArc,
     app_config: std::sync::Arc<AppConfig>,
 ) -> anyhow::Result<()> {
@@ -34,7 +32,7 @@ pub async fn handle_stream(
         .map(|message| {
             handle_streamer_message(
                 message,
-                &client,
+                &pool,
                 receipts_cache_arc.clone(),
                 app_config.clone(),
             )
@@ -59,7 +57,7 @@ pub async fn handle_stream(
 
 #[tracing::instrument(
     name = "handle_streamer_message",
-    skip(message, client, receipts_cache_arc, app_config),
+    skip(message, pool, receipts_cache_arc, app_config),
     fields(
         block_height = message.block.header.height,
         block_hash = %message.block.header.hash
@@ -67,7 +65,7 @@ pub async fn handle_stream(
 )]
 async fn handle_streamer_message(
     message: StreamerMessage,
-    client: &Client,
+    pool: &PgPool,
     receipts_cache_arc: cache::ReceiptsCacheArc,
     app_config: std::sync::Arc<AppConfig>,
 ) -> anyhow::Result<u64> {
@@ -76,35 +74,25 @@ async fn handle_streamer_message(
     tracing::info!(
         target: indexer_common::config::INDEXER,
         "Block: {}",
-        message.block.header.height
+        block_height
     );
 
-    if !app_config.events_only {
-        // We always process transactions first to populate the cache
-        // with mappings from Receipt IDs to their parent Transaction hashes.
-        transactions::handle_transactions(&message, client, receipts_cache_arc.clone()).await?;
-    }
+    // Process transactions to populate the receipt-to-tx cache
+    extractors::transactions::extract_transactions(&message, receipts_cache_arc.clone()).await?;
 
-    let events_future = events::handle_events(
+    // Extract raw events
+    let events = extractors::events::extract_events(
         &message,
-        client,
         receipts_cache_arc.clone(),
         app_config.outcome_concurrency,
-    );
+    )
+    .await?;
 
-    if !app_config.events_only {
-        let receipts_and_outcomes_future = receipts_and_outcomes::handle_receipts_and_outcomes(
-            &message,
-            client,
-            receipts_cache_arc.clone(),
-            app_config.outcome_concurrency,
-        );
+    // Parse events into silver DIP-4 transfer rows
+    let transfer_rows = extractors::silver_transfers::extract_silver_dip4_transfers(&events);
 
-        // Run receipts+outcomes and events in parallel
-        tokio::try_join!(receipts_and_outcomes_future, events_future)?;
-    } else {
-        events_future.await?;
-    }
+    // Insert into Postgres
+    crate::database::insert_transfer_rows(pool, &transfer_rows).await?;
 
     indexer_common::metrics::LATEST_BLOCK_HEIGHT.set(block_height as i64);
     indexer_common::metrics::BLOCK_PROCESSED_TOTAL.inc();
@@ -112,6 +100,7 @@ async fn handle_streamer_message(
     tracing::info!(
         target: indexer_common::config::INDEXER,
         duration_ms = duration.as_millis(),
+        transfers = transfer_rows.len(),
         "handle_streamer_message completed"
     );
     Ok(block_height)

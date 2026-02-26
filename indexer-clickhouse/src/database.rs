@@ -1,5 +1,5 @@
 use clickhouse::{Client, Row};
-use indexer_common::config::AppConfig;
+use crate::config::AppConfig;
 
 const SAVE_ATTEMPTS: usize = 10;
 

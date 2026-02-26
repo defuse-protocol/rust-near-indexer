@@ -290,6 +290,10 @@ compare_table "silver_dip4_fee_changed" \
     "block_height, related_receipt_id" \
     "block_height, block_timestamp, block_hash, contract_id, execution_status, version, standard, event, related_receipt_id, related_receipt_receiver_id, related_receipt_predecessor_id, old_fee, new_fee"
 
+compare_table "silver_dip4_transfer" \
+    "block_height, related_receipt_id, event, old_owner_id, new_owner_id, token_id" \
+    "block_height, block_timestamp, block_hash, tx_hash, contract_id, execution_status, version, standard, event, related_receipt_id, related_receipt_receiver_id, related_receipt_predecessor_id, memo, old_owner_id, new_owner_id, token_id, amount, intent_hash"
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo ""
 if (( FAILURES == 0 )); then

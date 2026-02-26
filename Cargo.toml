@@ -3,6 +3,7 @@ members = [
     "indexer-primitives",
     "indexer-common",
     "indexer-clickhouse",
+    "indexer-postgres",
 ]
 resolver = "3"
 
@@ -30,6 +31,8 @@ tokio-stream = "0.1"
 tracing = "0.1.13"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-opentelemetry = "0.20.0"
+chrono = "0.4"
+sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres", "bigdecimal", "migrate", "chrono"] }
 
 # Internal crates
 indexer-primitives = { path = "indexer-primitives" }
