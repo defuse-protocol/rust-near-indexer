@@ -64,6 +64,10 @@ if ! [[ "$BLOCK_END" =~ ^[0-9]+$ ]]; then
     echo "Error: --block-end must be a positive integer, got: $BLOCK_END"
     exit 1
 fi
+if (( BLOCK_START > BLOCK_END )); then
+    echo "Error: --block-start must be <= --block-end, got: $BLOCK_START > $BLOCK_END"
+    exit 1
+fi
 
 FAILURES=0
 
@@ -129,9 +133,9 @@ CH_COLS="toString(block_height),
   COALESCE(token_id, ''),
   intent_hash"
 
-# Sort key for deterministic ordering
-PG_SORT_KEY="block_height, related_receipt_id, event, COALESCE(old_owner_id, ''), COALESCE(new_owner_id, ''), COALESCE(token_id, '')"
-CH_SORT_KEY="block_height, related_receipt_id, event, COALESCE(old_owner_id, ''), COALESCE(new_owner_id, ''), COALESCE(token_id, '')"
+# Sort key for deterministic ordering (block_timestamp included to break ties)
+PG_SORT_KEY="block_height, block_timestamp, related_receipt_id, event, COALESCE(old_owner_id, ''), COALESCE(new_owner_id, ''), COALESCE(token_id, '')"
+CH_SORT_KEY="block_height, block_timestamp, related_receipt_id, event, COALESCE(old_owner_id, ''), COALESCE(new_owner_id, ''), COALESCE(token_id, '')"
 
 PG_BLOCK_FILTER="block_height >= ${BLOCK_START} AND block_height <= ${BLOCK_END}"
 CH_BLOCK_FILTER="block_height >= ${BLOCK_START} AND block_height <= ${BLOCK_END}"
