@@ -209,7 +209,10 @@ async fn try_insert_rows(pool: &PgPool, rows: &[SilverDip4TransferRow]) -> anyho
                 $18, $19
             ) ON CONFLICT DO NOTHING"#,
         )
-        .bind(row.block_height as i64)
+        .bind(
+            i64::try_from(row.block_height)
+                .map_err(|_| anyhow::anyhow!("block_height overflows i64: {}", row.block_height))?,
+        )
         .bind(block_ts)
         .bind(&row.block_hash)
         .bind(&row.tx_hash)
