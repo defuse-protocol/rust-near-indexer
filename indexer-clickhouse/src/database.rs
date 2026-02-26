@@ -1,5 +1,5 @@
-use clickhouse::{Client, Row};
 use crate::config::AppConfig;
+use clickhouse::{Client, Row};
 
 const SAVE_ATTEMPTS: usize = 10;
 

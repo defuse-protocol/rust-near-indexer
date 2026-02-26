@@ -6,8 +6,8 @@ use tokio_stream::wrappers::ReceiverStream;
 
 use blocksapi::near_indexer_primitives::StreamerMessage;
 
-use indexer_common::cache;
 use crate::config::AppConfig;
+use indexer_common::cache;
 
 mod events;
 mod receipts_and_outcomes;

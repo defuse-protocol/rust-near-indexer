@@ -2075,7 +2075,6 @@ dependencies = [
  "serde_json",
  "sqlx",
  "tokio",
- "tokio-retry",
  "tokio-stream",
  "tracing",
  "tracing-opentelemetry",

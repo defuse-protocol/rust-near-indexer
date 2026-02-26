@@ -69,6 +69,12 @@ Three accounts are tracked: `intents.near`, `defuse-alpha.near`, `staging-intent
 - `scripts/cross-validate.sh` — compares local vs production ClickHouse for a block range using aggregate fingerprints (`count()` + `groupBitXor(cityHash64(...))`) on all core + silver tables. Drills down on mismatches.
 - Both use `curl` against ClickHouse HTTP interface with CLI flags for connection params.
 
+## Code Quality
+
+Before finishing any code change, always:
+1. Run `cargo fmt --check` — if it reports issues, run `cargo fmt` to fix them.
+2. Run `cargo clippy --workspace` — address all warnings before considering the task done.
+
 ## Conventions
 - No tests exist yet
 - Env config via clap (see `indexer-common/src/config.rs`)

@@ -28,12 +28,11 @@ pub fn extract_silver_dip4_transfers(events: &[EventRow]) -> Vec<SilverDip4Trans
         }
         if let Ok(arr) = serde_json::from_str::<Vec<serde_json::Value>>(&ev.data) {
             for item in &arr {
-                if let Some(referral) = item.get("referral").and_then(|v| v.as_str()) {
-                    if !referral.is_empty() {
-                        referral_by_receipt
-                            .insert(&ev.related_receipt_id, referral.to_string());
-                        break;
-                    }
+                if let Some(referral) = item.get("referral").and_then(|v| v.as_str())
+                    && !referral.is_empty()
+                {
+                    referral_by_receipt.insert(&ev.related_receipt_id, referral.to_string());
+                    break;
                 }
             }
         }
