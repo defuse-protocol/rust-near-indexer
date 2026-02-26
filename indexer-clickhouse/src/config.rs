@@ -59,7 +59,7 @@ pub struct AppConfig {
     /// Forces the indexer to start from the specified block height provided via --block-height,
     /// even if a higher block height is found in the database. This is useful when reindexing
     /// from a specific point is needed.
-    #[clap(long, requires = "block_height", hide = true)]
+    #[clap(long, hide = true)]
     pub force_from_block_height: bool,
 
     /// OpenTelemetry OTLP endpoint for trace export (env: OTEL_EXPORTER_OTLP_ENDPOINT)

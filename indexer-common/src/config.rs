@@ -30,9 +30,6 @@ pub async fn init_tracing_with_otel(otel: Option<&OtelConfig>) -> anyhow::Result
         }
     }
 
-    // Ensures all traces are exported and resources cleaned up
-    opentelemetry::global::shutdown_tracer_provider();
-
     // Configures how trace context propagates across services
     opentelemetry::global::set_text_map_propagator(
         opentelemetry::sdk::propagation::TraceContextPropagator::new(),

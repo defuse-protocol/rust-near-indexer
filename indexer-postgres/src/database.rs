@@ -44,7 +44,9 @@ pub async fn get_last_block_height(pool: &PgPool) -> anyhow::Result<u64> {
         sqlx::query_as("SELECT COALESCE(MAX(block_height), 0) FROM silver_dip4_transfers")
             .fetch_one(pool)
             .await?;
-    Ok(row.0 as u64)
+    row.0
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("block_height {} cannot convert to u64", row.0))
 }
 
 pub async fn insert_transfer_rows(
@@ -173,8 +175,22 @@ async fn try_insert_rows(pool: &PgPool, rows: &[SilverDip4TransferRow]) -> anyho
     let mut tx = pool.begin().await?;
 
     for row in rows {
-        let amount: Option<sqlx::types::BigDecimal> =
-            row.amount.parse::<sqlx::types::BigDecimal>().ok();
+        let amount: Option<sqlx::types::BigDecimal> = match row
+            .amount
+            .parse::<sqlx::types::BigDecimal>()
+        {
+            Ok(v) => Some(v),
+            Err(err) => {
+                tracing::warn!(
+                    target: indexer_common::config::INDEXER,
+                    "Failed to parse amount '{}' as BigDecimal for receipt {}: {}. Inserting NULL.",
+                    row.amount,
+                    row.related_receipt_id,
+                    err,
+                );
+                None
+            }
+        };
 
         let block_ts: DateTime<Utc> = nanos_to_datetime(row.block_timestamp)?;
 

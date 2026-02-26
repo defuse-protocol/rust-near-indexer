@@ -14,7 +14,7 @@ pub struct AppConfig {
 
     /// Forces the indexer to start from the specified block height provided via --block-height,
     /// even if a higher block height is found in the database.
-    #[clap(long, requires = "block_height", hide = true)]
+    #[clap(long, hide = true)]
     pub force_from_block_height: bool,
 
     /// PostgreSQL connection URL (env: DATABASE_URL)
