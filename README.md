@@ -173,7 +173,7 @@ For detailed tracing documentation, see [TRACING.md](./TRACING.md).
 
 ## Validation Scripts
 
-Two bash scripts in `scripts/` use `curl` against the ClickHouse HTTP interface to validate indexed data.
+Three bash scripts in `scripts/` validate indexed data.
 
 ### `scripts/validate.sh` — Single-instance integrity checks
 
@@ -188,7 +188,7 @@ Runs against one ClickHouse instance and checks:
 ./scripts/validate.sh --url http://localhost:8123 --user indexer --password indexer --database default
 ```
 
-### `scripts/cross-validate.sh` — Compare local vs production
+### `scripts/cross-validate.sh` — Compare local vs production ClickHouse
 
 Compares two ClickHouse instances over a shared block range. For each table it computes:
 - `count()` — catches missing or extra rows
@@ -206,7 +206,17 @@ Covers all 4 core tables (`transactions`, `receipts`, `execution_outcomes`, `eve
   --block-start 168545460 --block-end 168545523
 ```
 
-Exit code: `0` = all match, `1` = mismatch found.
+### `scripts/cross-validate-pg.sh` — Compare local PostgreSQL vs production ClickHouse
+
+Compares local Postgres `silver_dip4_transfers` against production ClickHouse `silver_dip4_transfer` for a block range. 4 phases: total row count, per-block counts, row-level content diff (excluding amount), amount comparison with relative tolerance (Float64 vs NUMERIC).
+
+```bash
+./scripts/cross-validate-pg.sh \
+  --pg-url "postgres://indexer:indexer@localhost:5433/defuse_indexer" \
+  --block-start 186929800 --block-end 186929900
+```
+
+All three scripts exit `0` on success, `1` on mismatch, with detailed diff output.
 
 ## Project Structure
 
@@ -216,7 +226,7 @@ This is a Cargo workspace:
 ├── indexer-primitives/       # Shared types crate (row structs, Action, EventJson)
 ├── indexer-common/           # Shared logic: extractors, cache, config, metrics
 ├── indexer-clickhouse/       # ClickHouse indexer binary (near-defuse-indexer)
-├── indexer-explorer/         # PostgreSQL indexer binary (indexer-explorer)
+├── indexer-explorer/         # Explorer indexer binary (indexer-explorer, PostgreSQL backend)
 ├── clickhouse/init/          # ClickHouse schema (auto-applied by docker-compose)
 ├── scripts/                  # Validation scripts (validate, cross-validate, cross-validate-pg)
 ├── docker-compose.yml        # Local ClickHouse + Redis + Postgres

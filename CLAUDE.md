@@ -17,7 +17,7 @@ cargo build --release
 cp .env.example .env  # then edit
 cargo run --release --bin near-defuse-indexer
 
-# Run Postgres indexer (needs POSTGRES_URL in addition to BlocksAPI env vars)
+# Run Explorer indexer (needs DATABASE_URL in addition to BlocksAPI env vars)
 cargo run --release --bin indexer-explorer
 
 # Reset local data

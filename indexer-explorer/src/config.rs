@@ -1,6 +1,6 @@
 use clap::Parser;
 
-/// Application configuration for the Postgres indexer.
+/// Application configuration for the Explorer indexer (PostgreSQL backend).
 #[derive(Parser, Clone)]
 #[clap(author, version, about = "NEAR Defuse Indexer — PostgreSQL backend")]
 pub struct AppConfig {
