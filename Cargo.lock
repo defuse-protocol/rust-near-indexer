@@ -2060,7 +2060,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "indexer-postgres"
+name = "indexer-explorer"
 version = "0.4.0"
 dependencies = [
  "anyhow",

@@ -3,7 +3,7 @@ members = [
     "indexer-primitives",
     "indexer-common",
     "indexer-clickhouse",
-    "indexer-postgres",
+    "indexer-explorer",
 ]
 resolver = "3"
 

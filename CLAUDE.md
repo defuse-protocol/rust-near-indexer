@@ -1,7 +1,7 @@
 # NEAR Defuse Custom Indexer
 
 ## Project Overview
-Cargo workspace: `indexer-primitives` (types) + `indexer-common` (shared logic) + `indexer-clickhouse` (binary) + `indexer-postgres` (binary).
+Cargo workspace: `indexer-primitives` (types) + `indexer-common` (shared logic) + `indexer-clickhouse` (binary) + `indexer-explorer` (binary).
 Streams NEAR blocks via BlocksAPI, processes transactions/receipts/outcomes/events, stores in ClickHouse and/or PostgreSQL. Redis for receipt-to-transaction cache.
 
 ## Build & Run
@@ -18,7 +18,7 @@ cp .env.example .env  # then edit
 cargo run --release --bin near-defuse-indexer
 
 # Run Postgres indexer (needs POSTGRES_URL in addition to BlocksAPI env vars)
-cargo run --release --bin indexer-postgres
+cargo run --release --bin indexer-explorer
 
 # Reset local data
 docker compose down -v
@@ -28,7 +28,7 @@ docker compose down -v
 - `indexer-primitives` — row structs (`EventRow`, `TransactionRow`, `ReceiptRow`, `ExecutionOutcomeRow`), supporting types (`Action`, `ReceiptOrDataId`, `EventJson`). Optional `clickhouse` feature adds `#[derive(Row)]`.
 - `indexer-common` — shared logic: config, extractors (parse blocks into row structs), cache (Redis), metrics. **No ClickHouse dependency.**
 - `indexer-clickhouse` — binary: ClickHouse client, insert logic (with exponential backoff), handlers that call extractors then insert. Activates `clickhouse` feature on `indexer-primitives`.
-- `indexer-postgres` — binary: indexes DIP-4 transfer events into PostgreSQL. Own `AppConfig` in `indexer-postgres/src/config.rs`. Uses `sqlx` with migrations. Monthly-partitioned `silver_dip4_transfers` table with auto-partition creation on insert.
+- `indexer-explorer` — binary: indexes DIP-4 transfer events into PostgreSQL. Own `AppConfig` in `indexer-explorer/src/config.rs`. Uses `sqlx` with migrations. Monthly-partitioned `silver_dip4_transfers` table with auto-partition creation on insert.
 
 ### Dependency graph
 ```
@@ -36,7 +36,7 @@ indexer-primitives  (serde, blocksapi; optional clickhouse)
        ↑
 indexer-common      (extractors, cache, config, metrics — NO clickhouse, NO postgres)
        ↑              ↑
-indexer-clickhouse    indexer-postgres
+indexer-clickhouse    indexer-explorer
 (ClickHouse client)   (sqlx/Postgres client)
 ```
 
@@ -62,7 +62,7 @@ Source of truth for ClickHouse schema: `clickhouse/init/*.sql`
 - `staging_silver_transfers` (VIEW) — mirrors `silver_transfers` for staging
 
 ### PostgreSQL
-Source of truth for Postgres schema: `indexer-postgres/migrations/`
+Source of truth for Postgres schema: `indexer-explorer/migrations/`
 - `silver_dip4_transfers` — monthly partitioned by `block_timestamp` (`PARTITION BY RANGE`). Migration pre-creates partitions Dec 2024–Dec 2026. Auto-creation on insert: if PG returns "no partition of relation", the indexer creates the missing monthly partition and retries.
 - Docker Postgres is on **port 5433** (mapped from container 5432). URL: `postgres://indexer:indexer@localhost:5433/defuse_indexer`.
 
@@ -95,7 +95,7 @@ When verifying that local indexing matches production, follow this approach:
 4. **Run both indexers** (they can run in parallel since they share Redis but write to different DBs). Use different `--metrics-server-port` values to avoid port conflicts:
    ```bash
    cargo run --release --bin near-defuse-indexer -- --metrics-server-port 8000 &
-   cargo run --release --bin indexer-postgres -- --database-url "postgres://indexer:indexer@localhost:5433/defuse_indexer" --metrics-server-port 8001 &
+   cargo run --release --bin indexer-explorer -- --database-url "postgres://indexer:indexer@localhost:5433/defuse_indexer" --metrics-server-port 8001 &
    wait
    ```
 5. **Run ClickHouse cross-validation**:
@@ -120,10 +120,10 @@ Before finishing any code change, always:
 
 ## Conventions
 - No tests exist yet
-- Env config via clap (`indexer-common/src/config.rs` for shared config, `indexer-postgres/src/config.rs` for PG-specific config)
+- Env config via clap (`indexer-common/src/config.rs` for shared config, `indexer-explorer/src/config.rs` for PG-specific config)
 - ClickHouse inserts use exponential backoff (10 retries) — lives in `indexer-clickhouse/src/database.rs`
-- Postgres inserts use manual retry loop (10 attempts) with auto-partition creation — lives in `indexer-postgres/src/database.rs`
+- Postgres inserts use manual retry loop (10 attempts) with auto-partition creation — lives in `indexer-explorer/src/database.rs`
 - Redis two-tier cache: main + potential, with TTL
 - Extraction logic (parsing blocks into row structs) lives in `indexer-common/src/extractors/`
-- Handler logic (calling extractors + inserting into DB) lives in `indexer-clickhouse/src/handlers/` and `indexer-postgres/src/handlers/`
+- Handler logic (calling extractors + inserting into DB) lives in `indexer-clickhouse/src/handlers/` and `indexer-explorer/src/handlers/`
 - Use `try_into()` instead of `as i64` for u64→i64 casts to avoid silent overflow

@@ -1,11 +1,11 @@
 [package]
-name = "indexer-postgres"
+name = "indexer-explorer"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
 [[bin]]
-name = "indexer-postgres"
+name = "indexer-explorer"
 path = "src/main.rs"
 
 [dependencies]

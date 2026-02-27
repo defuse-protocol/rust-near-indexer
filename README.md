@@ -216,7 +216,7 @@ This is a Cargo workspace:
 ├── indexer-primitives/       # Shared types crate (row structs, Action, EventJson)
 ├── indexer-common/           # Shared logic: extractors, cache, config, metrics
 ├── indexer-clickhouse/       # ClickHouse indexer binary (near-defuse-indexer)
-├── indexer-postgres/         # PostgreSQL indexer binary (indexer-postgres)
+├── indexer-explorer/         # PostgreSQL indexer binary (indexer-explorer)
 ├── clickhouse/init/          # ClickHouse schema (auto-applied by docker-compose)
 ├── scripts/                  # Validation scripts (validate, cross-validate, cross-validate-pg)
 ├── docker-compose.yml        # Local ClickHouse + Redis + Postgres

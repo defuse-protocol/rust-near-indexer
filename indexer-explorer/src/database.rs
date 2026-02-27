@@ -7,6 +7,8 @@ use std::collections::BTreeSet;
 use indexer_primitives::SilverDip4TransferRow;
 
 const SAVE_ATTEMPTS: usize = 10;
+const RETRY_INITIAL_DELAY_MS: u64 = 250;
+const RETRY_MAX_DELAY_SECS: u64 = 60;
 
 /// Convert a NEAR nanosecond-epoch timestamp to a chrono DateTime<Utc>.
 fn nanos_to_datetime(block_timestamp: u64) -> anyhow::Result<DateTime<Utc>> {
@@ -58,8 +60,8 @@ pub async fn insert_transfer_rows(
     }
 
     // Manual retry loop with exponential backoff so we can await partition creation
-    let mut delay = std::time::Duration::from_millis(250);
-    let max_delay = std::time::Duration::from_secs(60);
+    let mut delay = std::time::Duration::from_millis(RETRY_INITIAL_DELAY_MS);
+    let max_delay = std::time::Duration::from_secs(RETRY_MAX_DELAY_SECS);
 
     for attempt in 1..=SAVE_ATTEMPTS {
         match try_insert_rows(pool, rows).await {

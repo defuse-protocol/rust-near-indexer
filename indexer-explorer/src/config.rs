@@ -53,8 +53,8 @@ pub struct AppConfig {
     #[clap(long, env = "OTEL_EXPORTER_OTLP_ENDPOINT")]
     pub otel_endpoint: Option<String>,
 
-    /// Service name for tracing (env: OTEL_SERVICE_NAME, default: indexer-postgres)
-    #[clap(long, env = "OTEL_SERVICE_NAME", default_value = "indexer-postgres")]
+    /// Service name for tracing (env: OTEL_SERVICE_NAME, default: indexer-explorer)
+    #[clap(long, env = "OTEL_SERVICE_NAME", default_value = "indexer-explorer")]
     pub otel_service_name: String,
 
     /// Service version for tracing (env: OTEL_SERVICE_VERSION, default: 0.1.0)

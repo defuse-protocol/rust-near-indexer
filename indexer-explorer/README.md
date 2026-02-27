@@ -1,4 +1,4 @@
-# indexer-postgres
+# indexer-explorer
 
 Indexes DIP-4 transfer events from NEAR blockchain into PostgreSQL. Part of the Defuse custom indexer workspace.
 
@@ -12,7 +12,7 @@ docker compose up -d postgres --wait
 cp .env.example .env  # edit BLOCKSAPI_SERVER_ADDR, BLOCKSAPI_TOKEN, DATABASE_URL
 
 # Build and run
-cargo run --release -p indexer-postgres
+cargo run --release -p indexer-explorer
 ```
 
 ## Table: `silver_dip4_transfers`

@@ -41,16 +41,10 @@ pub async fn init_tracing_with_otel(otel: Option<&OtelConfig>) -> anyhow::Result
             .endpoint
             .find("://")
             .map(|scheme_end| {
-                let scheme = &otel_config.endpoint[..scheme_end + 3];
+                let after_scheme = &otel_config.endpoint[..scheme_end + 3];
                 let rest = &otel_config.endpoint[scheme_end + 3..];
-                // Strip userinfo (user:pass@) if present — look for '@' before the first '/'
-                let authority_end = rest.find('/').unwrap_or(rest.len());
-                let host_part = match rest[..authority_end].rfind('@') {
-                    Some(at) => &rest[at + 1..],
-                    None => rest,
-                };
-                let host_end = host_part.find(['/', '?', ':']).unwrap_or(host_part.len());
-                format!("{}{}", scheme, &host_part[..host_end])
+                let host_end = rest.find(['/', '?', ':']).unwrap_or(rest.len());
+                format!("{}{}", after_scheme, &rest[..host_end])
             })
             .unwrap_or_else(|| "<invalid URL>".to_string());
         eprintln!(
