@@ -6,7 +6,7 @@ use clap::Parser;
 
 use config::AppConfig;
 use indexer_common::cache;
-use indexer_common::config::{OtelConfig, init_tracing_with_otel};
+use indexer_common::config::init_tracing_with_otel;
 use indexer_common::metrics;
 
 #[tokio::main]
@@ -16,11 +16,7 @@ async fn main() -> anyhow::Result<()> {
     let config = AppConfig::parse();
 
     // Initialize tracing (with or without OpenTelemetry based on configuration)
-    let otel = config.otel_endpoint.as_ref().map(|endpoint| OtelConfig {
-        endpoint: endpoint.clone(),
-        service_name: config.otel_service_name.clone(),
-        service_version: config.otel_service_version.clone(),
-    });
+    let otel = config.common.otel_config();
     init_tracing_with_otel(otel.as_ref()).await?;
 
     // Expose version info metric once
@@ -32,10 +28,10 @@ async fn main() -> anyhow::Result<()> {
     let pool = database::init_pg_pool(&config.database_url).await?;
 
     // Determine start block
-    let block_height: u64 = config.block_height;
+    let block_height: u64 = config.common.block_height;
     let last_height = database::get_last_block_height(&pool).await?;
 
-    let start_block = if config.force_from_block_height {
+    let start_block = if config.common.force_from_block_height {
         tracing::warn!(
             target: indexer_common::config::INDEXER,
             "Forcing reindex from block height: {}",
@@ -54,45 +50,13 @@ async fn main() -> anyhow::Result<()> {
 
     // Init Redis receipt cache
     let receipts_cache_arc: cache::ReceiptsCacheArc =
-        cache::init_cache(&config.redis_url, config.redis_ttl_seconds).await?;
+        cache::init_cache(&config.common.redis_url, config.common.redis_ttl_seconds).await?;
 
     // Initiate metrics http server
-    if config.metrics_basic_auth_user.is_some() && config.metrics_basic_auth_password.is_some() {
-        tracing::info!(
-            target: indexer_common::config::INDEXER,
-            "Metrics server basic auth is enabled"
-        );
-        tokio::spawn(metrics::init_server_with_basic_auth(
-            config.metrics_server_port,
-            (
-                config
-                    .metrics_basic_auth_user
-                    .clone()
-                    .expect("metrics_basic_auth_user is set"),
-                config
-                    .metrics_basic_auth_password
-                    .clone()
-                    .expect("metrics_basic_auth_password is set"),
-            ),
-        )?);
-    } else {
-        tracing::info!(
-            target: indexer_common::config::INDEXER,
-            "Metrics server basic auth is disabled"
-        );
-        tokio::spawn(metrics::init_server(config.metrics_server_port)?);
-    };
+    metrics::spawn_metrics_server(&config.common)?;
 
-    let blocksapi_config = blocksapi::BlocksApiConfigBuilder::default()
-        .server_addr(config.blocksapi_server_addr.clone())
-        .start_on(Some(start_block))
-        .blocksapi_token(Some(config.blocksapi_token.clone()))
-        .batch_size(30)
-        .concurrency(1000)
-        .buffer_size(2 * 1024 * 1024 * 1024)
-        .concurrency_limit(2048)
-        .build()
-        .expect("Error creating Blocks API config");
+    let blocksapi_config =
+        indexer_common::config::build_blocksapi_config(&config.common, start_block);
 
     let app_config = std::sync::Arc::new(config);
 

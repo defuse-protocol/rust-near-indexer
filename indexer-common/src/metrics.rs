@@ -87,6 +87,36 @@ lazy_static! {
     ).unwrap();
 }
 
+/// Spawn the metrics HTTP server using settings from `CommonConfig`.
+pub fn spawn_metrics_server(common: &crate::config::CommonConfig) -> anyhow::Result<()> {
+    if common.metrics_basic_auth_user.is_some() && common.metrics_basic_auth_password.is_some() {
+        tracing::info!(
+            target: crate::config::INDEXER,
+            "Metrics server basic auth is enabled"
+        );
+        tokio::spawn(init_server_with_basic_auth(
+            common.metrics_server_port,
+            (
+                common
+                    .metrics_basic_auth_user
+                    .clone()
+                    .expect("metrics_basic_auth_user is set"),
+                common
+                    .metrics_basic_auth_password
+                    .clone()
+                    .expect("metrics_basic_auth_password is set"),
+            ),
+        )?);
+    } else {
+        tracing::info!(
+            target: crate::config::INDEXER,
+            "Metrics server basic auth is disabled"
+        );
+        tokio::spawn(init_server(common.metrics_server_port)?);
+    }
+    Ok(())
+}
+
 #[get("/metrics")]
 async fn get_metrics() -> impl Responder {
     let encoder = prometheus::TextEncoder::new();

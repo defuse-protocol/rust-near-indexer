@@ -26,9 +26,9 @@ docker compose down -v
 
 ## Key Crates
 - `indexer-primitives` — row structs (`EventRow`, `TransactionRow`, `ReceiptRow`, `ExecutionOutcomeRow`), supporting types (`Action`, `ReceiptOrDataId`, `EventJson`). Optional `clickhouse` feature adds `#[derive(Row)]`.
-- `indexer-common` — shared logic: config, extractors (parse blocks into row structs), cache (Redis), metrics. **No ClickHouse dependency.**
-- `indexer-clickhouse` — binary: ClickHouse client, insert logic (with exponential backoff), handlers that call extractors then insert. Activates `clickhouse` feature on `indexer-primitives`.
-- `indexer-explorer` — binary: indexes DIP-4 transfer events into PostgreSQL. Own `AppConfig` in `indexer-explorer/src/config.rs`. Uses `sqlx` with migrations. Monthly-partitioned `silver_dip4_transfers` table with auto-partition creation on insert.
+- `indexer-common` — shared logic: `CommonConfig` (clap-based shared CLI/env config), extractors (parse blocks into row structs), cache (Redis), metrics (including `spawn_metrics_server`), `build_blocksapi_config` helper. **No ClickHouse dependency.**
+- `indexer-clickhouse` — binary: ClickHouse client, insert logic (with exponential backoff), handlers that call extractors then insert. Activates `clickhouse` feature on `indexer-primitives`. `AppConfig` flattens `CommonConfig` and adds ClickHouse-specific fields + `events_only`.
+- `indexer-explorer` — binary: indexes DIP-4 transfer events into PostgreSQL. `AppConfig` flattens `CommonConfig` and adds `database_url`. Uses `sqlx` with migrations. Monthly-partitioned `silver_dip4_transfers` table with auto-partition creation on insert.
 
 ### Dependency graph
 ```
@@ -120,7 +120,7 @@ Before finishing any code change, always:
 
 ## Conventions
 - No tests exist yet
-- Env config via clap (`indexer-common/src/config.rs` for shared config, `indexer-explorer/src/config.rs` for PG-specific config)
+- Env config via clap: `CommonConfig` in `indexer-common/src/config.rs` holds all shared fields (block range, Redis, metrics, OTel, BlocksAPI, concurrency). Each binary's `AppConfig` uses `#[clap(flatten)] pub common: CommonConfig` plus DB-specific fields. Shared fields accessed as `config.common.field`.
 - ClickHouse inserts use exponential backoff (10 retries) — lives in `indexer-clickhouse/src/database.rs`
 - Postgres inserts use manual retry loop (10 attempts) with auto-partition creation — lives in `indexer-explorer/src/database.rs`
 - Redis two-tier cache: main + potential, with TTL

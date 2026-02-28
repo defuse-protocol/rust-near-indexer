@@ -2042,6 +2042,7 @@ dependencies = [
  "actix-web-httpauth",
  "anyhow",
  "blocksapi",
+ "clap",
  "futures",
  "indexer-primitives",
  "lazy_static",

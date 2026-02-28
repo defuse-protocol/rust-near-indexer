@@ -21,7 +21,7 @@ pub async fn handle_stream(
 ) -> anyhow::Result<()> {
     let (_, stream) = blocksapi::streamer(config);
 
-    let block_end = app_config.block_end;
+    let block_end = app_config.common.block_end;
     if let Some(end) = block_end {
         tracing::info!(
             target: indexer_common::config::INDEXER,
@@ -89,7 +89,7 @@ async fn handle_streamer_message(
         &message,
         client,
         receipts_cache_arc.clone(),
-        app_config.outcome_concurrency,
+        app_config.common.outcome_concurrency,
     );
 
     if !app_config.events_only {
@@ -97,7 +97,7 @@ async fn handle_streamer_message(
             &message,
             client,
             receipts_cache_arc.clone(),
-            app_config.outcome_concurrency,
+            app_config.common.outcome_concurrency,
         );
 
         // Run receipts+outcomes and events in parallel

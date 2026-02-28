@@ -13,6 +13,7 @@ actix-web.workspace = true
 actix-web-httpauth.workspace = true
 anyhow.workspace = true
 blocksapi.workspace = true
+clap.workspace = true
 futures.workspace = true
 indexer-primitives.workspace = true
 lazy_static.workspace = true
