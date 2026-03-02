@@ -1,4 +1,3 @@
-use clickhouse::Row;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -22,7 +21,8 @@ impl std::fmt::Display for ReceiptOrDataId {
 // Creating type aliases to make HashMap types for cache more explicit
 pub type ParentTransactionHashString = String;
 
-#[derive(Row, Serialize)]
+#[cfg_attr(feature = "clickhouse", derive(clickhouse::Row))]
+#[derive(Serialize)]
 pub struct EventRow {
     pub block_height: u64,
     pub block_timestamp: u64,
@@ -49,7 +49,8 @@ pub struct EventJson {
     pub data: Value,
 }
 
-#[derive(Row, Serialize)]
+#[cfg_attr(feature = "clickhouse", derive(clickhouse::Row))]
+#[derive(Serialize)]
 pub struct TransactionRow {
     pub block_height: u64,
     pub block_timestamp: u64,
@@ -60,7 +61,8 @@ pub struct TransactionRow {
     pub actions: String,
 }
 
-#[derive(Row, Serialize)]
+#[cfg_attr(feature = "clickhouse", derive(clickhouse::Row))]
+#[derive(Serialize)]
 pub struct ReceiptRow {
     pub block_height: u64,
     pub block_timestamp: u64,
@@ -72,7 +74,8 @@ pub struct ReceiptRow {
     pub actions: String,
 }
 
-#[derive(Row, Serialize)]
+#[cfg_attr(feature = "clickhouse", derive(clickhouse::Row))]
+#[derive(Serialize)]
 pub struct ExecutionOutcomeRow {
     pub block_height: u64,
     pub block_timestamp: u64,
@@ -102,6 +105,31 @@ pub enum Action {
     DeployGlobalContract(near_primitives::action::DeployGlobalContractAction),
     UseGlobalContract(Box<near_primitives::action::UseGlobalContractAction>),
     DeterministicStateInit(Box<near_primitives::action::DeterministicStateInitAction>),
+}
+
+/// Denormalized row for silver-level DIP-4 transfer data.
+/// Each row = one (token_id, amount) pair from a `transfer` event, enriched with `referral`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SilverDip4TransferRow {
+    pub block_height: u64,
+    pub block_timestamp: u64,
+    pub block_hash: String,
+    pub tx_hash: String,
+    pub contract_id: String,
+    pub execution_status: String,
+    pub version: String,
+    pub standard: String,
+    pub event: String,
+    pub related_receipt_id: String,
+    pub related_receipt_receiver_id: String,
+    pub related_receipt_predecessor_id: String,
+    pub memo: Option<String>,
+    pub old_owner_id: Option<String>,
+    pub new_owner_id: Option<String>,
+    pub token_id: String,
+    pub amount: String,
+    pub intent_hash: String,
+    pub referral: Option<String>,
 }
 
 impl TryFrom<&near_primitives::views::ActionView> for Action {

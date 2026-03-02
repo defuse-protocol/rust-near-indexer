@@ -16,7 +16,7 @@ pub async fn get_last_height_transactions(
     client: &Client,
 ) -> Result<u64, clickhouse::error::Error> {
     tracing::info!(
-        target: crate::config::INDEXER,
+        target: indexer_common::config::INDEXER,
         "Fetching last indexed block height from ClickHouse..."
     );
     client
@@ -29,7 +29,7 @@ pub async fn get_last_height_transactions(
 /// Should be used along with the `--events-only` mode
 pub async fn get_last_height_events(client: &Client) -> Result<u64, clickhouse::error::Error> {
     tracing::info!(
-        target: crate::config::INDEXER,
+        target: indexer_common::config::INDEXER,
         "Fetching last indexed block height from ClickHouse..."
     );
     client
@@ -57,9 +57,9 @@ pub async fn insert_rows(
         .take(SAVE_ATTEMPTS);
     tokio_retry::Retry::spawn(retry_strategy, || async {
         try_insert_rows(client, table, rows).await.map_err(|err| {
-            crate::metrics::DATABASE_INSERT_RETRIES_TOTAL.inc();
+            indexer_common::metrics::DATABASE_INSERT_RETRIES_TOTAL.inc();
             tracing::warn!(
-                target: crate::config::INDEXER,
+                target: indexer_common::config::INDEXER,
                 "Failed to insert rows into {}: {}",
                 table,
                 err
@@ -82,7 +82,7 @@ async fn try_insert_rows(
     rows: &[impl Row + serde::Serialize],
 ) -> anyhow::Result<()> {
     tracing::debug!(
-        target: crate::config::INDEXER,
+        target: indexer_common::config::INDEXER,
         "Inserting {} rows into table {}",
         rows.len(),
         table

@@ -6,18 +6,12 @@ use tokio_stream::wrappers::ReceiverStream;
 
 use blocksapi::near_indexer_primitives::StreamerMessage;
 
-use crate::cache;
 use crate::config::AppConfig;
+use indexer_common::cache;
 
 mod events;
 mod receipts_and_outcomes;
 mod transactions;
-
-pub(crate) fn any_account_id_of_interest(account_ids: &[&str]) -> bool {
-    account_ids
-        .iter()
-        .any(|id| crate::CONTRACT_ACCOUNT_IDS_OF_INTEREST.contains(id))
-}
 
 pub async fn handle_stream(
     config: blocksapi::BlocksApiConfig,
@@ -26,6 +20,15 @@ pub async fn handle_stream(
     app_config: std::sync::Arc<AppConfig>,
 ) -> anyhow::Result<()> {
     let (_, stream) = blocksapi::streamer(config);
+
+    let block_end = app_config.common.block_end;
+    if let Some(end) = block_end {
+        tracing::info!(
+            target: indexer_common::config::INDEXER,
+            "Indexer will stop after block height: {}",
+            end
+        );
+    }
 
     let mut handlers = ReceiverStream::new(stream)
         .map(|message| {
@@ -39,7 +42,17 @@ pub async fn handle_stream(
         .buffer_unordered(1);
 
     while let Some(result) = handlers.next().await {
-        result?; // Propagate error to interrupt the stream
+        let block_height = result?;
+        if let Some(end) = block_end
+            && block_height >= end
+        {
+            tracing::info!(
+                target: indexer_common::config::INDEXER,
+                "Reached block_end={}, stopping.",
+                end
+            );
+            break;
+        }
     }
     Ok(())
 }
@@ -57,11 +70,11 @@ async fn handle_streamer_message(
     client: &Client,
     receipts_cache_arc: cache::ReceiptsCacheArc,
     app_config: std::sync::Arc<AppConfig>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<u64> {
     let start = Instant::now();
-    crate::metrics::LATEST_BLOCK_HEIGHT.set(message.block.header.height as i64);
+    let block_height = message.block.header.height;
     tracing::info!(
-        target: crate::config::INDEXER,
+        target: indexer_common::config::INDEXER,
         "Block: {}",
         message.block.header.height
     );
@@ -76,7 +89,7 @@ async fn handle_streamer_message(
         &message,
         client,
         receipts_cache_arc.clone(),
-        app_config.outcome_concurrency,
+        app_config.common.outcome_concurrency,
     );
 
     if !app_config.events_only {
@@ -84,7 +97,7 @@ async fn handle_streamer_message(
             &message,
             client,
             receipts_cache_arc.clone(),
-            app_config.outcome_concurrency,
+            app_config.common.outcome_concurrency,
         );
 
         // Run receipts+outcomes and events in parallel
@@ -93,12 +106,13 @@ async fn handle_streamer_message(
         events_future.await?;
     }
 
-    crate::metrics::BLOCK_PROCESSED_TOTAL.inc();
+    indexer_common::metrics::LATEST_BLOCK_HEIGHT.set(block_height as i64);
+    indexer_common::metrics::BLOCK_PROCESSED_TOTAL.inc();
     let duration = start.elapsed();
     tracing::info!(
-        target: crate::config::INDEXER,
+        target: indexer_common::config::INDEXER,
         duration_ms = duration.as_millis(),
         "handle_streamer_message completed"
     );
-    Ok(())
+    Ok(block_height)
 }

@@ -4,33 +4,25 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 pub const INDEXER: &str = "near_defuse_indexer";
 
-/// Application configuration loaded from CLI arguments and environment variables.
+/// Shared configuration fields used by all indexer binaries.
 #[derive(Parser, Clone)]
-#[clap(author, version, about)]
-pub struct AppConfig {
-    // Fallback block height to start if no previous height is found in the database
+pub struct CommonConfig {
+    /// Fallback block height to start if no previous height is found in the database
     #[clap(long, env = "BLOCK_HEIGHT", default_value = "0")]
     pub block_height: u64,
 
-    /// Clickhouse server URL (env: CLICKHOUSE_URL)
-    #[clap(long, env = "CLICKHOUSE_URL")]
-    pub clickhouse_url: String,
+    /// Stop the indexer after processing this block height (env: BLOCK_END)
+    #[clap(long, env = "BLOCK_END")]
+    pub block_end: Option<u64>,
 
-    /// Clickhouse username (env: CLICKHOUSE_USER)
-    #[clap(long, env = "CLICKHOUSE_USER")]
-    pub clickhouse_user: String,
+    /// Forces the indexer to start from the specified block height provided via --block-height,
+    /// even if a higher block height is found in the database.
+    #[clap(long, hide = true)]
+    pub force_from_block_height: bool,
 
-    /// Clickhouse password (env: CLICKHOUSE_PASSWORD)
-    #[clap(long, env = "CLICKHOUSE_PASSWORD")]
-    pub clickhouse_password: String,
-
-    /// Clickhouse database name (env: CLICKHOUSE_DATABASE)
-    #[clap(long, env = "CLICKHOUSE_DATABASE")]
-    pub clickhouse_database: String,
-
-    /// Redis server URL (env: REDIS_URL)
+    /// Redis server URL for receipt-to-tx cache (env: REDIS_URL)
     #[clap(long, env = "REDIS_URL")]
-    pub redis_url: Option<String>,
+    pub redis_url: String,
 
     /// Redis cache TTL in seconds (env: REDIS_TTL_SECONDS, default: 900)
     #[clap(long, env = "REDIS_TTL_SECONDS", default_value = "900")]
@@ -56,12 +48,6 @@ pub struct AppConfig {
     )]
     pub metrics_basic_auth_password: Option<String>,
 
-    /// Forces the indexer to start from the specified block height provided via --block-height,
-    /// even if a higher block height is found in the database. This is useful when reindexing
-    /// from a specific point is needed.
-    #[clap(long, requires = "block_height", hide = true)]
-    pub force_from_block_height: bool,
-
     /// OpenTelemetry OTLP endpoint for trace export (env: OTEL_EXPORTER_OTLP_ENDPOINT)
     #[clap(long, env = "OTEL_EXPORTER_OTLP_ENDPOINT")]
     pub otel_endpoint: Option<String>,
@@ -85,13 +71,44 @@ pub struct AppConfig {
     /// Blocks API token (env: BLOCKSAPI_TOKEN)
     #[clap(long, env = "BLOCKSAPI_TOKEN")]
     pub blocksapi_token: String,
-
-    /// Handle only events ignoring the transactions, receipts, outcomes
-    #[clap(long, env = "EVENTS_ONLY_MODE")]
-    pub events_only: bool,
 }
 
-pub async fn init_tracing_with_otel(config: &AppConfig) -> anyhow::Result<()> {
+impl CommonConfig {
+    /// Build an `OtelConfig` from the common fields, if an endpoint is configured.
+    pub fn otel_config(&self) -> Option<OtelConfig> {
+        self.otel_endpoint.as_ref().map(|endpoint| OtelConfig {
+            endpoint: endpoint.clone(),
+            service_name: self.otel_service_name.clone(),
+            service_version: self.otel_service_version.clone(),
+        })
+    }
+}
+
+/// Build a BlocksApi configuration from the common config and a start block height.
+pub fn build_blocksapi_config(
+    common: &CommonConfig,
+    start_block: u64,
+) -> blocksapi::BlocksApiConfig {
+    blocksapi::BlocksApiConfigBuilder::default()
+        .server_addr(common.blocksapi_server_addr.clone())
+        .start_on(Some(start_block))
+        .blocksapi_token(Some(common.blocksapi_token.clone()))
+        .batch_size(30)
+        .concurrency(1000)
+        .buffer_size(2 * 1024 * 1024 * 1024)
+        .concurrency_limit(2048)
+        .build()
+        .expect("Error creating Blocks API config")
+}
+
+/// Minimal config for OpenTelemetry tracing initialization.
+pub struct OtelConfig {
+    pub endpoint: String,
+    pub service_name: String,
+    pub service_version: String,
+}
+
+pub async fn init_tracing_with_otel(otel: Option<&OtelConfig>) -> anyhow::Result<()> {
     // Initialize default directives from environment variable RUST_LOG
     // with a fallback to INFO level for the indexer target
     let mut env_filter = tracing_subscriber::EnvFilter::new(format!("{}=info,info", INDEXER));
@@ -111,18 +128,26 @@ pub async fn init_tracing_with_otel(config: &AppConfig) -> anyhow::Result<()> {
         }
     }
 
-    // Ensures all traces are exported and resources cleaned up
-    opentelemetry::global::shutdown_tracer_provider();
-
     // Configures how trace context propagates across services
     opentelemetry::global::set_text_map_propagator(
         opentelemetry::sdk::propagation::TraceContextPropagator::new(),
     );
 
-    if let Some(otlp_endpoint) = &config.otel_endpoint {
+    if let Some(otel_config) = otel {
+        // Log only scheme+host to avoid leaking auth tokens in the endpoint URL
+        let redacted = otel_config
+            .endpoint
+            .find("://")
+            .map(|scheme_end| {
+                let after_scheme = &otel_config.endpoint[..scheme_end + 3];
+                let rest = &otel_config.endpoint[scheme_end + 3..];
+                let host_end = rest.find(['/', '?', ':']).unwrap_or(rest.len());
+                format!("{}{}", after_scheme, &rest[..host_end])
+            })
+            .unwrap_or_else(|| "<invalid URL>".to_string());
         eprintln!(
             "Initializing OpenTelemetry tracing with endpoint: {}",
-            otlp_endpoint
+            redacted
         );
 
         let tracer = opentelemetry_otlp::new_pipeline()
@@ -130,17 +155,17 @@ pub async fn init_tracing_with_otel(config: &AppConfig) -> anyhow::Result<()> {
             .with_exporter(
                 opentelemetry_otlp::new_exporter()
                     .http()
-                    .with_endpoint(otlp_endpoint),
+                    .with_endpoint(&otel_config.endpoint),
             )
             .with_trace_config(opentelemetry_sdk::trace::config().with_resource(
                 opentelemetry_sdk::Resource::new(vec![
                     opentelemetry::KeyValue::new(
                         opentelemetry_semantic_conventions::resource::SERVICE_NAME,
-                        config.otel_service_name.clone(),
+                        otel_config.service_name.clone(),
                     ),
                     opentelemetry::KeyValue::new(
                         opentelemetry_semantic_conventions::resource::SERVICE_VERSION,
-                        config.otel_service_version.clone(),
+                        otel_config.service_version.clone(),
                     ),
                 ]),
             ))
@@ -152,13 +177,13 @@ pub async fn init_tracing_with_otel(config: &AppConfig) -> anyhow::Result<()> {
             .with(env_filter)
             .with(tracing_subscriber::fmt::layer())
             .with(telemetry)
-            .init();
+            .try_init()?;
     } else {
         eprintln!("OpenTelemetry endpoint not configured, using default tracing");
         tracing_subscriber::registry()
             .with(env_filter)
             .with(tracing_subscriber::fmt::layer())
-            .init();
+            .try_init()?;
     }
 
     Ok(())

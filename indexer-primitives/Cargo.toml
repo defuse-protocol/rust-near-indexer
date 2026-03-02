@@ -1,0 +1,16 @@
+[package]
+name = "indexer-primitives"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[features]
+default = []
+clickhouse = ["dep:clickhouse"]
+
+[dependencies]
+anyhow.workspace = true
+blocksapi.workspace = true
+clickhouse = { version = "0.13.2", optional = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true

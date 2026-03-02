@@ -14,7 +14,8 @@ This project is a Rust-based indexer that processes blockchain events from NEAR 
 
 1. [Rust](https://www.rust-lang.org/tools/install) 1.90.0 version recommended)
 2. [Clickhouse](https://clickhouse.com/docs/en/quick-start#self-managed-install) database server
-3. Environment variables for configuration
+3. [Docker](https://docs.docker.com/get-docker/) (for local development)
+4. Environment variables for configuration
 
 ### Build the project
 
@@ -22,68 +23,81 @@ This project is a Rust-based indexer that processes blockchain events from NEAR 
 cargo build --release
 ```
 
+## Local Development (Docker Compose)
+
+The fastest way to get a local ClickHouse + Redis environment:
+
+```bash
+# Start ClickHouse and Redis (schema auto-created on first run)
+docker compose up -d --wait
+
+# Copy and edit .env
+cp .env.example .env
+# Edit .env — set BLOCKSAPI_SERVER_ADDR and BLOCKSAPI_TOKEN
+
+# Build & run
+cargo run --release --bin near-defuse-indexer
+
+# Verify schema was created
+docker compose exec clickhouse clickhouse-client \
+  --user indexer --password indexer \
+  --query "SHOW TABLES FROM indexer"
+
+# Teardown (keep data)
+docker compose down
+
+# Teardown (reset everything)
+docker compose down -v
+```
+
+Default credentials (matching `docker-compose.yml` and `.env.example`):
+- ClickHouse: `indexer` / `indexer` / database `indexer` on `http://localhost:8123`
+- Redis: `redis://localhost:6379`
+
+The ClickHouse schema is defined in `clickhouse/init/` and auto-applied on first container start:
+
+| File | Contents |
+|------|----------|
+| `01-core-tables.sql` | `events`, `transactions`, `receipts`, `execution_outcomes` |
+| `02-silver-tables.sql` | `defuse_assets`, `silver_nep_245_events`, `silver_dip4_*` tables + MVs |
+| `03-gold-views.sql` | `gold_view_intents_metrics` |
+
+> **Note:** The `defuse_assets` materialized view (`mv_defuse_assets`) is intentionally excluded from the init scripts because it fetches from an external URL that won't be available in local/CI environments. In production, create it manually.
+
 ## Environment Configuration
 
-Before running the indexer, ensure that all required environment variables are set:
 The indexer is configured via environment variables. The table below lists the most commonly used options. Values marked REQUIRED must be provided; others have sensible defaults or are optional depending on features you use.
 
 | Variable                | Required | Description |
 |-------------------------|:--------:|-------------|
-| `CLICKHOUSE_URL`        |    Yes   | Clickhouse server URL (e.g. `http://localhost:18123`) |
+| `CLICKHOUSE_URL`        |    Yes   | Clickhouse server URL (e.g. `http://localhost:8123`) |
 | `CLICKHOUSE_USER`       |    Yes   | Clickhouse username |
 | `CLICKHOUSE_PASSWORD`   |    Yes   | Clickhouse password |
-| `CLICKHOUSE_DATABASE`   |    Yes   | Clickhouse database name (default: `mainnet`) |
+| `CLICKHOUSE_DATABASE`   |    Yes   | Clickhouse database name (default: `indexer`) |
 | `BLOCK_HEIGHT`          |    No    | Start block height for indexing — if unset the indexer resumes from last saved state |
 | `REDIS_URL`             |    No    | Redis connection URL for caching (optional) |
 | `OUTCOME_CONCURRENCY`   |    No    | Per-outcome parallelism (default: 32) |
 | `BLOCKSAPI_SERVER_ADDR` |    Yes   | Blocks API server address |
 | `BLOCKSAPI_TOKEN`       |    Yes   | Blocks API access token |
 
-Quick examples:
-
-Create a `.env` file (example):
-
-```bash
-# .env
-CLICKHOUSE_URL="http://localhost:18123"
-CLICKHOUSE_DATABASE="mainnet"
-CLICKHOUSE_USER="clickhouse"
-CLICKHOUSE_PASSWORD="secret"
-BLOCKSAPI_SERVER_ADDR="http://localhost:4300"
-BLOCKSAPI_TOKEN="blocksapi_access_token"
-# optional:
-# REDIS_URL="redis://127.0.0.1:6379"
-# BLOCK_HEIGHT="130636886"
-# OUTCOME_CONCURRENCY="48" # example tuning
-```
-
-Load the `.env` and run (POSIX shell):
-
-```bash
-export $(grep -v '^#' .env | xargs)
-cargo run --release
-```
-
-Notes:
-- If you use NEAR Lake with S3, provide AWS credentials or an appropriate IAM role.
-- `REDIS_URL` is optional and used for the transaction cache; leave unset to disable Redis caching.
+See `.env.example` for a complete template with all options.
 
 ## Usage
 
 Prerequisites
-- Clickhouse server running and reachable via `CLICKHOUSE_URL`.
-- (Optional) Redis server if using caching.
+- ClickHouse and Redis running (see [Local Development](#local-development-docker-compose) above, or use your own instances).
+- Environment variables configured (copy `.env.example` to `.env` and edit).
 
 Basic run (development / single-run):
 
 ```bash
-cargo run --release
+cargo run --release --bin near-defuse-indexer
 ```
 
 Override the start block on the fly:
 
 ```bash
-BLOCK_HEIGHT=130636886 cargo run --release
+BLOCK_HEIGHT=130636886 cargo run --release --bin near-defuse-indexer
 ```
 
 Deployment suggestions
@@ -91,7 +105,7 @@ Deployment suggestions
 - Ensure Clickhouse and Redis (if used) are configured for persistent storage and appropriate resource limits.
 
 What the indexer does
-- Connects to the NEAR stream, decodes events, and writes structured rows into Clickhouse tables defined in this README.
+- Connects to the NEAR stream, decodes events, and writes structured rows into Clickhouse tables.
 - Persists a small transaction cache to Redis (if `REDIS_URL` is provided) to deduplicate work across blocks.
 
 Logging and metrics
@@ -157,21 +171,70 @@ Key questions the tracing helps answer:
 
 For detailed tracing documentation, see [TRACING.md](./TRACING.md).
 
+## Validation Scripts
+
+Three bash scripts in `scripts/` validate indexed data.
+
+### `scripts/validate.sh` — Single-instance integrity checks
+
+Runs against one ClickHouse instance and checks:
+- **Completeness** — tables have rows, block height ranges are consistent
+- **Cache misses** — events with null `tx_hash` are below 5%
+- **Referential integrity** — all receipt/outcome `parent_transaction_hash` values exist in `transactions`
+- **Account filtering** — events only from the three accounts of interest
+- **JSON validity** — serialized columns (`actions`, `logs`) contain valid JSON
+
+```bash
+./scripts/validate.sh --url http://localhost:8123 --user indexer --password indexer --database default
+```
+
+### `scripts/cross-validate.sh` — Compare local vs production ClickHouse
+
+Compares two ClickHouse instances over a shared block range. For each table it computes:
+- `count()` — catches missing or extra rows
+- `groupBitXor(cityHash64(pk_columns))` — PK-level checksum (order-independent)
+- `groupBitXor(cityHash64(all_columns))` — full row checksum (catches content divergence)
+
+All queries use `SELECT ... FROM <table> FINAL` to force ReplacingMergeTree deduplication.
+
+Covers all 4 core tables (`transactions`, `receipts`, `execution_outcomes`, `events`) and all 5 silver tables. On mismatch, drills down to per-block row counts and prints sample rows from the first diverging block.
+
+```bash
+./scripts/cross-validate.sh \
+  --local-url http://localhost:8123 --local-user indexer --local-password indexer --local-database default \
+  --prod-url https://prod:8443 --prod-user user --prod-password "$PROD_PW" --prod-database default \
+  --block-start 168545460 --block-end 168545523
+```
+
+### `scripts/cross-validate-pg.sh` — Compare local PostgreSQL vs production ClickHouse
+
+Compares local Postgres `silver_dip4_transfers` against production ClickHouse `silver_dip4_transfer` for a block range. 4 phases: total row count, per-block counts, row-level content diff (excluding amount), amount comparison with relative tolerance (Float64 vs NUMERIC).
+
+```bash
+./scripts/cross-validate-pg.sh \
+  --pg-url "postgres://indexer:indexer@localhost:5433/defuse_indexer" \
+  --block-start 186929800 --block-end 186929900
+```
+
+All three scripts exit `0` on success, `1` on mismatch, with detailed diff output.
+
 ## Project Structure
 
-The project is structured as follows:
+This is a Cargo workspace:
 
-- `main.rs`: Initializes the application, connects to Clickhouse, and starts the indexer.
-The project layout (top-level `src/` files):
-
-- `main.rs` — application entrypoint: loads configuration, starts runtime, wires components.
-- `database.rs` — Clickhouse connectivity, schema helper code and insert helpers.
-- `handlers/` — event handling code split per artifact (events, receipts, transactions, outcomes).
-- `metrics.rs` — Prometheus / metrics instrumentation.
-- `cache/` — transaction cache implementations (local / redis-backed).
+```
+├── indexer-primitives/       # Shared types crate (row structs, Action, EventJson)
+├── indexer-common/           # Shared logic: extractors, cache, config, metrics
+├── indexer-clickhouse/       # ClickHouse indexer binary (near-defuse-indexer)
+├── indexer-explorer/         # Explorer indexer binary (indexer-explorer, PostgreSQL backend)
+├── clickhouse/init/          # ClickHouse schema (auto-applied by docker-compose)
+├── scripts/                  # Validation scripts (validate, cross-validate, cross-validate-pg)
+├── docker-compose.yml        # Local ClickHouse + Redis + Postgres
+```
 
 Editing and extending
-- Add new materialized views or tables to the schema section below. If you add a table referenced by a view, keep names consistent.
+- Add new tables or materialized views to `clickhouse/init/` (the source of truth for schema).
+- Keep the schema section below in sync for quick reference.
 
 Troubleshooting
 - Connection refused to Clickhouse: verify `CLICKHOUSE_URL` and that Clickhouse is running and reachable from the host.

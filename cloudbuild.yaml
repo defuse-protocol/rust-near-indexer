@@ -6,15 +6,19 @@ steps:
       - |
         cargo build --release
         cp target/release/near-defuse-indexer ./near-defuse-indexer
+        cp target/release/indexer-explorer ./indexer-explorer
 
   - name: gcr.io/google.com/cloudsdktool/cloud-sdk
     entrypoint: bash
     args:
       - -c
       - |
+        TIMESTAMP=$(date +%Y%m%d%H%M%S)
         # Upload both versioned and latest
-        gsutil cp ./near-defuse-indexer gs://near-indexer-builds/near-defuse-indexer-$(date +%Y%m%d%H%M%S)
+        gsutil cp ./near-defuse-indexer gs://near-indexer-builds/near-defuse-indexer-${TIMESTAMP}
         gsutil cp ./near-defuse-indexer gs://near-indexer-builds/near-defuse-indexer
+        gsutil cp ./indexer-explorer gs://near-indexer-builds/indexer-explorer-${TIMESTAMP}
+        gsutil cp ./indexer-explorer gs://near-indexer-builds/indexer-explorer
 
 options:
   logging: CLOUD_LOGGING_ONLY
@@ -25,4 +29,4 @@ options:
 artifacts:
   objects:
     location: gs://near-indexer-builds/
-    paths: ["./near-defuse-indexer"]
+    paths: ["./near-defuse-indexer", "./indexer-explorer"]

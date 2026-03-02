@@ -1,5 +1,3 @@
-use std::time::Instant;
-
 use blocksapi::near_indexer_primitives;
 
 use crate::CONTRACT_ACCOUNT_IDS_OF_INTEREST;
@@ -7,28 +5,22 @@ use crate::cache;
 use crate::types::{EventJson, EventRow};
 use futures::{StreamExt, stream};
 
-const EVENT_JSON_PREFIX: &str = "EVENT_JSON:";
-const EVENT_CLICKHOUSE_TABLE: &str = "events";
+pub const EVENT_JSON_PREFIX: &str = "EVENT_JSON:";
 
-/// Extract events from the StreamerMessage,
-/// store events in Clickhouse, and update the receipts cache with
-/// mappings from receipt IDs to their parent transaction hashes.
+/// Extract events from the StreamerMessage and resolve parent transaction hashes
+/// via the receipts cache.
 /// This function processes only events related to accounts of interest.
-/// It uses the provided Clickhouse client for database operations and
-/// a shared receipts cache to maintain the relationship between receipts and transactions.
+/// It uses the shared receipts cache to maintain the relationship between receipts and transactions.
 #[tracing::instrument(
-    name = "handle_events",
-    skip(message, client, receipts_cache_arc),
+    name = "extract_events",
+    skip(message, receipts_cache_arc),
     fields(block_height = message.block.header.height)
 )]
-pub async fn handle_events(
+pub async fn extract_events(
     message: &near_indexer_primitives::StreamerMessage,
-    client: &clickhouse::Client,
     receipts_cache_arc: cache::ReceiptsCacheArc,
     events_concurrency: usize,
-) -> anyhow::Result<()> {
-    let start = Instant::now();
-
+) -> anyhow::Result<Vec<EventRow>> {
     let event_futures: Vec<_> = message
         .shards
         .iter()
@@ -93,28 +85,7 @@ pub async fn handle_events(
         .with_label_values(&["events"])
         .set(rows.len() as i64);
 
-    {
-        let _span =
-            tracing::debug_span!("insert_events_to_db", events_count = rows.len()).entered();
-        if let Err(err) = crate::database::insert_rows(client, EVENT_CLICKHOUSE_TABLE, &rows).await
-        {
-            crate::metrics::STORE_ERRORS_TOTAL.inc();
-            tracing::error!(
-                target: crate::config::INDEXER,
-                "Error inserting rows into Clickhouse: {}",
-                err
-            );
-            anyhow::bail!("Failed to insert rows into Clickhouse: {}", err)
-        }
-    }
-
-    let duration = start.elapsed();
-    tracing::debug!(
-        target: crate::config::INDEXER,
-        duration_ms = duration.as_millis(),
-        "handle_events completed"
-    );
-    Ok(())
+    Ok(rows)
 }
 
 /// Parse a log entry to extract an EventRow if it contains valid event data.
@@ -187,7 +158,7 @@ async fn parse_event(
     };
 
     if tx_hash.is_none()
-        && super::any_account_id_of_interest(&[
+        && crate::any_account_id_of_interest(&[
             outcome.receipt.receiver_id.as_str(),
             outcome.receipt.predecessor_id.as_str(),
         ])
@@ -255,7 +226,7 @@ async fn parse_event(
 }
 
 /// Helper to parse the execution status into a string representation.
-pub(crate) fn parse_status(status: near_indexer_primitives::views::ExecutionStatusView) -> String {
+pub fn parse_status(status: near_indexer_primitives::views::ExecutionStatusView) -> String {
     match status {
         near_indexer_primitives::views::ExecutionStatusView::SuccessReceiptId(_) => {
             "success_receipt_id".to_string()
