@@ -13,11 +13,11 @@ steps:
     args:
       - -c
       - |
-        TIMESTAMP=$(date +%Y%m%d%H%M%S)
+        TIMESTAMP=$$(date +%Y%m%d%H%M%S)
         # Upload both versioned and latest
-        gsutil cp ./near-defuse-indexer gs://near-indexer-builds/near-defuse-indexer-${TIMESTAMP}
+        gsutil cp ./near-defuse-indexer gs://near-indexer-builds/near-defuse-indexer-$${TIMESTAMP}
         gsutil cp ./near-defuse-indexer gs://near-indexer-builds/near-defuse-indexer
-        gsutil cp ./indexer-explorer gs://near-indexer-builds/indexer-explorer-${TIMESTAMP}
+        gsutil cp ./indexer-explorer gs://near-indexer-builds/indexer-explorer-$${TIMESTAMP}
         gsutil cp ./indexer-explorer gs://near-indexer-builds/indexer-explorer
 
 options:
