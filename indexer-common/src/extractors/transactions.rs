@@ -14,10 +14,11 @@ use tokio::try_join;
 pub async fn extract_transactions(
     message: &near_indexer_primitives::StreamerMessage,
     receipts_cache_arc: cache::ReceiptsCacheArc,
+    accounts_of_interest: &[String],
 ) -> anyhow::Result<(Vec<types::TransactionRow>, Vec<types::ExecutionOutcomeRow>)> {
     try_join!(
-        extract_transaction_rows(message, receipts_cache_arc.clone()),
-        extract_transaction_execution_outcomes(message)
+        extract_transaction_rows(message, receipts_cache_arc.clone(), accounts_of_interest),
+        extract_transaction_execution_outcomes(message, accounts_of_interest)
     )
 }
 
@@ -25,11 +26,13 @@ pub async fn extract_transactions(
 async fn extract_transaction_rows(
     message: &near_indexer_primitives::StreamerMessage,
     receipts_cache_arc: cache::ReceiptsCacheArc,
+    accounts_of_interest: &[String],
 ) -> anyhow::Result<Vec<types::TransactionRow>> {
     let block_height = message.block.header.height;
     let block_hash = message.block.header.hash.to_string();
     let block_timestamp = message.block.header.timestamp;
 
+    let accounts_refs: Vec<&str> = accounts_of_interest.iter().map(|s| s.as_str()).collect();
     let transaction_futures = message
         .shards
         .iter()
@@ -42,6 +45,7 @@ async fn extract_transaction_rows(
                 block_timestamp,
                 block_hash.clone(),
                 receipts_cache_arc.clone(),
+                &accounts_refs,
             )
         });
 
@@ -79,6 +83,7 @@ async fn parse_transaction(
     block_timestamp: u64,
     block_hash: String,
     receipts_cache_arc: cache::ReceiptsCacheArc,
+    accounts_of_interest: &[&str],
 ) -> Option<types::TransactionRow> {
     let transaction_hash = tx.transaction.hash.to_string();
     let converted_into_receipt_id = tx
@@ -89,10 +94,13 @@ async fn parse_transaction(
         .first()
         .expect("`receipt_ids` must contain one Receipt Id");
 
-    if crate::any_account_id_of_interest(&[
-        tx.transaction.signer_id.as_str(),
-        tx.transaction.receiver_id.as_str(),
-    ]) {
+    if crate::any_account_id_of_interest(
+        &[
+            tx.transaction.signer_id.as_str(),
+            tx.transaction.receiver_id.as_str(),
+        ],
+        accounts_of_interest,
+    ) {
         // Save this Transaction hash to ReceiptsCache
         // we use the Receipt ID to which this transaction was converted
         // and the Transaction hash as a value.
@@ -144,11 +152,13 @@ async fn parse_transaction(
 // This is separate from receipt execution outcomes handled in receipts_and_outcomes.rs
 async fn extract_transaction_execution_outcomes(
     message: &near_indexer_primitives::StreamerMessage,
+    accounts_of_interest: &[String],
 ) -> anyhow::Result<Vec<types::ExecutionOutcomeRow>> {
     let block_height = message.block.header.height;
     let block_hash = message.block.header.hash.to_string();
     let block_timestamp = message.block.header.timestamp;
 
+    let accounts_refs: Vec<&str> = accounts_of_interest.iter().map(|s| s.as_str()).collect();
     let execution_outcome_futures = message
         .shards
         .iter()
@@ -160,6 +170,7 @@ async fn extract_transaction_execution_outcomes(
                 block_height,
                 block_timestamp,
                 block_hash.clone(),
+                &accounts_refs,
             )
         });
 
@@ -182,11 +193,15 @@ async fn parse_transaction_execution_outcome(
     block_height: u64,
     block_timestamp: u64,
     block_hash: String,
+    accounts_of_interest: &[&str],
 ) -> Option<types::ExecutionOutcomeRow> {
-    if crate::any_account_id_of_interest(&[
-        tx.transaction.signer_id.as_str(),
-        tx.transaction.receiver_id.as_str(),
-    ]) {
+    if crate::any_account_id_of_interest(
+        &[
+            tx.transaction.signer_id.as_str(),
+            tx.transaction.receiver_id.as_str(),
+        ],
+        accounts_of_interest,
+    ) {
         Some(types::ExecutionOutcomeRow {
             block_height,
             block_timestamp,

@@ -11,8 +11,8 @@ pub use indexer_primitives as types;
 pub const CONTRACT_ACCOUNT_IDS_OF_INTEREST: &[&str] =
     &["intents.near", "defuse-alpha.near", "staging-intents.near"];
 
-pub fn any_account_id_of_interest(account_ids: &[&str]) -> bool {
+pub fn any_account_id_of_interest(account_ids: &[&str], accounts_of_interest: &[&str]) -> bool {
     account_ids
         .iter()
-        .any(|id| CONTRACT_ACCOUNT_IDS_OF_INTEREST.contains(id))
+        .any(|id| accounts_of_interest.contains(id))
 }

@@ -63,7 +63,12 @@ pub struct CommonConfig {
     /// Concurrency level for per-outcome processing (env: OUTCOME_CONCURRENCY, default: 32)
     #[clap(long, env = "OUTCOME_CONCURRENCY", default_value = "32")]
     pub outcome_concurrency: usize,
+}
 
+/// BlocksAPI-specific configuration fields.
+/// Flattened into binary AppConfigs that use BlocksAPI as their data source.
+#[derive(Parser, Clone)]
+pub struct BlocksApiFields {
     /// Blocks API server address (env: BLOCKSAPI_SERVER_ADDR)
     #[clap(long, env = "BLOCKSAPI_SERVER_ADDR")]
     pub blocksapi_server_addr: String,
@@ -84,15 +89,15 @@ impl CommonConfig {
     }
 }
 
-/// Build a BlocksApi configuration from the common config and a start block height.
+/// Build a BlocksApi configuration from BlocksAPI fields and a start block height.
 pub fn build_blocksapi_config(
-    common: &CommonConfig,
+    blocksapi: &BlocksApiFields,
     start_block: u64,
 ) -> blocksapi::BlocksApiConfig {
     blocksapi::BlocksApiConfigBuilder::default()
-        .server_addr(common.blocksapi_server_addr.clone())
+        .server_addr(blocksapi.blocksapi_server_addr.clone())
         .start_on(Some(start_block))
-        .blocksapi_token(Some(common.blocksapi_token.clone()))
+        .blocksapi_token(Some(blocksapi.blocksapi_token.clone()))
         .batch_size(30)
         .concurrency(1000)
         .buffer_size(2 * 1024 * 1024 * 1024)

@@ -11,6 +11,10 @@ use indexer_common::extractors;
 
 use crate::config::AppConfig;
 
+const ACCOUNTS_OF_INTEREST: &[&str] =
+    &["intents.near", "defuse-alpha.near", "staging-intents.near"];
+const PRODUCTION_CONTRACT_IDS: &[&str] = &["defuse-alpha.near", "intents.near"];
+
 pub async fn handle_stream(
     config: blocksapi::BlocksApiConfig,
     pool: PgPool,
@@ -71,6 +75,7 @@ async fn handle_streamer_message(
 ) -> anyhow::Result<u64> {
     let start = Instant::now();
     let block_height = message.block.header.height;
+    let accounts: Vec<String> = ACCOUNTS_OF_INTEREST.iter().map(|s| s.to_string()).collect();
     tracing::info!(
         target: indexer_common::config::INDEXER,
         "Block: {}",
@@ -78,18 +83,23 @@ async fn handle_streamer_message(
     );
 
     // Process transactions to populate the receipt-to-tx cache
-    extractors::transactions::extract_transactions(&message, receipts_cache_arc.clone()).await?;
+    extractors::transactions::extract_transactions(&message, receipts_cache_arc.clone(), &accounts)
+        .await?;
 
     // Extract raw events
     let events = extractors::events::extract_events(
         &message,
         receipts_cache_arc.clone(),
         app_config.common.outcome_concurrency,
+        &accounts,
     )
     .await?;
 
     // Parse events into silver DIP-4 transfer rows
-    let transfer_rows = extractors::silver_transfers::extract_silver_dip4_transfers(&events);
+    let transfer_rows = extractors::silver_transfers::extract_silver_dip4_transfers(
+        &events,
+        PRODUCTION_CONTRACT_IDS,
+    );
 
     // Insert into Postgres
     crate::database::insert_transfer_rows(pool, &transfer_rows).await?;
