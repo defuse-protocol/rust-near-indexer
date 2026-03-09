@@ -32,6 +32,8 @@ pub async fn handle_stream(
         );
     }
 
+    let accounts: Vec<String> = ACCOUNTS_OF_INTEREST.iter().map(|s| s.to_string()).collect();
+
     let mut handlers = ReceiverStream::new(stream)
         .map(|message| {
             handle_streamer_message(
@@ -39,6 +41,7 @@ pub async fn handle_stream(
                 &pool,
                 receipts_cache_arc.clone(),
                 app_config.clone(),
+                &accounts,
             )
         })
         .buffer_unordered(1);
@@ -61,7 +64,7 @@ pub async fn handle_stream(
 
 #[tracing::instrument(
     name = "handle_streamer_message",
-    skip(message, pool, receipts_cache_arc, app_config),
+    skip(message, pool, receipts_cache_arc, app_config, accounts),
     fields(
         block_height = message.block.header.height,
         block_hash = %message.block.header.hash
@@ -72,10 +75,10 @@ async fn handle_streamer_message(
     pool: &PgPool,
     receipts_cache_arc: cache::ReceiptsCacheArc,
     app_config: std::sync::Arc<AppConfig>,
+    accounts: &[String],
 ) -> anyhow::Result<u64> {
     let start = Instant::now();
     let block_height = message.block.header.height;
-    let accounts: Vec<String> = ACCOUNTS_OF_INTEREST.iter().map(|s| s.to_string()).collect();
     tracing::info!(
         target: indexer_common::config::INDEXER,
         "Block: {}",
@@ -83,7 +86,7 @@ async fn handle_streamer_message(
     );
 
     // Process transactions to populate the receipt-to-tx cache
-    extractors::transactions::extract_transactions(&message, receipts_cache_arc.clone(), &accounts)
+    extractors::transactions::extract_transactions(&message, receipts_cache_arc.clone(), accounts)
         .await?;
 
     // Extract raw events
@@ -91,7 +94,7 @@ async fn handle_streamer_message(
         &message,
         receipts_cache_arc.clone(),
         app_config.common.outcome_concurrency,
-        &accounts,
+        accounts,
     )
     .await?;
 

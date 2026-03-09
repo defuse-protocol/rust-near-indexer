@@ -59,8 +59,14 @@ async fn main() -> anyhow::Result<()> {
     let stream = match &config.data_source {
         DataSource::Blocksapi => {
             let ba_fields = BlocksApiFields {
-                blocksapi_server_addr: config.blocksapi_server_addr.clone().unwrap(),
-                blocksapi_token: config.blocksapi_token.clone().unwrap(),
+                blocksapi_server_addr: config.blocksapi_server_addr.clone().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "BLOCKSAPI_SERVER_ADDR is required when data_source is blocksapi"
+                    )
+                })?,
+                blocksapi_token: config.blocksapi_token.clone().ok_or_else(|| {
+                    anyhow::anyhow!("BLOCKSAPI_TOKEN is required when data_source is blocksapi")
+                })?,
             };
             let blocksapi_config =
                 indexer_common::config::build_blocksapi_config(&ba_fields, start_block);
@@ -91,7 +97,9 @@ async fn build_lake_config(
     start_block: u64,
 ) -> anyhow::Result<near_lake_framework::LakeConfig> {
     let mut builder = near_lake_framework::LakeConfigBuilder::default()
-        .s3_bucket_name(config.lake_s3_bucket.as_ref().unwrap())
+        .s3_bucket_name(config.lake_s3_bucket.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("LAKE_S3_BUCKET is required when data_source is lake")
+        })?)
         .s3_region_name(&config.lake_s3_region)
         .start_block_height(start_block);
 
@@ -108,5 +116,7 @@ async fn build_lake_config(
         builder = builder.s3_config(s3_config);
     }
 
-    Ok(builder.build().expect("Failed to build LakeConfig"))
+    builder
+        .build()
+        .map_err(|e| anyhow::anyhow!("Failed to build LakeConfig: {e}"))
 }
