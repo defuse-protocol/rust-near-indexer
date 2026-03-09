@@ -1,6 +1,5 @@
 use blocksapi::near_indexer_primitives;
 
-use crate::CONTRACT_ACCOUNT_IDS_OF_INTEREST;
 use crate::cache;
 use crate::types::{EventJson, EventRow};
 use futures::{StreamExt, stream};
@@ -20,6 +19,7 @@ pub async fn extract_events(
     message: &near_indexer_primitives::StreamerMessage,
     receipts_cache_arc: cache::ReceiptsCacheArc,
     events_concurrency: usize,
+    accounts_of_interest: &[String],
 ) -> anyhow::Result<Vec<EventRow>> {
     let event_futures: Vec<_> = message
         .shards
@@ -41,6 +41,7 @@ pub async fn extract_events(
                         &message.block.header,
                         index as u64,
                         receipts_cache_arc.clone(),
+                        accounts_of_interest,
                     )
                 })
                 .collect::<Vec<_>>()
@@ -106,10 +107,11 @@ async fn parse_event(
     header: &near_indexer_primitives::views::BlockHeaderView,
     receipt_index_in_block: u64,
     receipts_cache_arc: cache::ReceiptsCacheArc,
+    accounts_of_interest: &[String],
 ) -> anyhow::Result<Option<EventRow>> {
     // 0. Fast contract filter: drop immediately if executor not of interest.
     let contract_id_ref = outcome.execution_outcome.outcome.executor_id.as_str();
-    if !CONTRACT_ACCOUNT_IDS_OF_INTEREST.contains(&contract_id_ref) {
+    if !accounts_of_interest.iter().any(|a| a == contract_id_ref) {
         return Ok(None);
     }
 
@@ -157,11 +159,15 @@ async fn parse_event(
         }
     };
 
+    let accounts_refs: Vec<&str> = accounts_of_interest.iter().map(|s| s.as_str()).collect();
     if tx_hash.is_none()
-        && crate::any_account_id_of_interest(&[
-            outcome.receipt.receiver_id.as_str(),
-            outcome.receipt.predecessor_id.as_str(),
-        ])
+        && crate::any_account_id_of_interest(
+            &[
+                outcome.receipt.receiver_id.as_str(),
+                outcome.receipt.predecessor_id.as_str(),
+            ],
+            &accounts_refs,
+        )
     {
         match receipts_cache_arc
             .potential_get(&crate::types::ReceiptOrDataId::ReceiptId(

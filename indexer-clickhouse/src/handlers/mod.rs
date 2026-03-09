@@ -14,13 +14,11 @@ mod receipts_and_outcomes;
 mod transactions;
 
 pub async fn handle_stream(
-    config: blocksapi::BlocksApiConfig,
+    stream: tokio::sync::mpsc::Receiver<StreamerMessage>,
     client: Client,
     receipts_cache_arc: cache::ReceiptsCacheArc,
     app_config: std::sync::Arc<AppConfig>,
 ) -> anyhow::Result<()> {
-    let (_, stream) = blocksapi::streamer(config);
-
     let block_end = app_config.common.block_end;
     if let Some(end) = block_end {
         tracing::info!(
@@ -73,6 +71,7 @@ async fn handle_streamer_message(
 ) -> anyhow::Result<u64> {
     let start = Instant::now();
     let block_height = message.block.header.height;
+    let accounts = &app_config.accounts_of_interest;
     tracing::info!(
         target: indexer_common::config::INDEXER,
         "Block: {}",
@@ -82,7 +81,8 @@ async fn handle_streamer_message(
     if !app_config.events_only {
         // We always process transactions first to populate the cache
         // with mappings from Receipt IDs to their parent Transaction hashes.
-        transactions::handle_transactions(&message, client, receipts_cache_arc.clone()).await?;
+        transactions::handle_transactions(&message, client, receipts_cache_arc.clone(), accounts)
+            .await?;
     }
 
     let events_future = events::handle_events(
@@ -90,6 +90,7 @@ async fn handle_streamer_message(
         client,
         receipts_cache_arc.clone(),
         app_config.common.outcome_concurrency,
+        accounts,
     );
 
     if !app_config.events_only {
@@ -98,6 +99,7 @@ async fn handle_streamer_message(
             client,
             receipts_cache_arc.clone(),
             app_config.common.outcome_concurrency,
+            accounts,
         );
 
         // Run receipts+outcomes and events in parallel

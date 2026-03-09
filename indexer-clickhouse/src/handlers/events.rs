@@ -16,6 +16,7 @@ pub async fn handle_events(
     client: &clickhouse::Client,
     receipts_cache_arc: cache::ReceiptsCacheArc,
     events_concurrency: usize,
+    accounts_of_interest: &[String],
 ) -> anyhow::Result<()> {
     let start = Instant::now();
 
@@ -23,6 +24,7 @@ pub async fn handle_events(
         message,
         receipts_cache_arc,
         events_concurrency,
+        accounts_of_interest,
     )
     .await?;
 

@@ -16,12 +16,14 @@ pub async fn handle_receipts_and_outcomes(
     client: &clickhouse::Client,
     receipts_cache_arc: cache::ReceiptsCacheArc,
     outcome_concurrency: usize,
+    accounts_of_interest: &[String],
 ) -> anyhow::Result<()> {
     let (execution_outcomes, receipts) =
         indexer_common::extractors::receipts_and_outcomes::collect_outcomes_and_receipts(
             message,
             receipts_cache_arc,
             outcome_concurrency,
+            accounts_of_interest,
         )
         .await?;
 

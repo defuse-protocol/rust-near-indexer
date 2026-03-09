@@ -56,7 +56,7 @@ async fn main() -> anyhow::Result<()> {
     metrics::spawn_metrics_server(&config.common)?;
 
     let blocksapi_config =
-        indexer_common::config::build_blocksapi_config(&config.common, start_block);
+        indexer_common::config::build_blocksapi_config(&config.blocksapi, start_block);
 
     let app_config = std::sync::Arc::new(config);
 

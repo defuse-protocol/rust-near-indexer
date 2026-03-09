@@ -2,7 +2,7 @@
 
 ## Project Overview
 Cargo workspace: `indexer-primitives` (types) + `indexer-common` (shared logic) + `indexer-clickhouse` (binary) + `indexer-explorer` (binary).
-Streams NEAR blocks via BlocksAPI, processes transactions/receipts/outcomes/events, stores in ClickHouse and/or PostgreSQL. Redis for receipt-to-transaction cache.
+Streams NEAR/Pinet blocks via BlocksAPI or S3/GCS (near-lake-framework), processes transactions/receipts/outcomes/events, stores in ClickHouse and/or PostgreSQL. Redis for receipt-to-transaction cache.
 
 ## Build & Run
 
@@ -27,7 +27,7 @@ docker compose down -v
 ## Key Crates
 - `indexer-primitives` — row structs (`EventRow`, `TransactionRow`, `ReceiptRow`, `ExecutionOutcomeRow`), supporting types (`Action`, `ReceiptOrDataId`, `EventJson`). Optional `clickhouse` feature adds `#[derive(Row)]`.
 - `indexer-common` — shared logic: `CommonConfig` (clap-based shared CLI/env config), extractors (parse blocks into row structs), cache (Redis), metrics (including `spawn_metrics_server`), `build_blocksapi_config` helper. **No ClickHouse dependency.**
-- `indexer-clickhouse` — binary: ClickHouse client, insert logic (with exponential backoff), handlers that call extractors then insert. Activates `clickhouse` feature on `indexer-primitives`. `AppConfig` flattens `CommonConfig` and adds ClickHouse-specific fields + `events_only`.
+- `indexer-clickhouse` — binary (`near-defuse-indexer`): ClickHouse client, insert logic (with exponential backoff), handlers that call extractors then insert. Activates `clickhouse` feature on `indexer-primitives`. Supports two data sources: **BlocksAPI** (default, for NEAR) and **Lake** (S3/GCS via `near-lake-framework`, for Pinet). `AppConfig` flattens `CommonConfig` and adds data source selection, ClickHouse-specific fields, `accounts_of_interest`, and `events_only`.
 - `indexer-explorer` — binary: indexes DIP-4 transfer events into PostgreSQL. `AppConfig` flattens `CommonConfig` and adds `database_url`. Uses `sqlx` with migrations. Monthly-partitioned `silver_dip4_transfers` table with auto-partition creation on insert.
 
 ### Dependency graph
@@ -37,7 +37,8 @@ indexer-primitives  (serde, blocksapi; optional clickhouse)
 indexer-common      (extractors, cache, config, metrics — NO clickhouse, NO postgres)
        ↑              ↑
 indexer-clickhouse    indexer-explorer
-(ClickHouse client)   (sqlx/Postgres client)
+(ClickHouse client,   (sqlx/Postgres client,
+ BlocksAPI + Lake)     BlocksAPI only)
 ```
 
 ## Schema
@@ -118,9 +119,26 @@ Before finishing any code change, always:
 1. Run `cargo fmt --check` — if it reports issues, run `cargo fmt` to fix them.
 2. Run `cargo clippy --workspace` — address all warnings before considering the task done.
 
+## Data Sources
+
+The `near-defuse-indexer` binary supports two data sources, selected via `--data-source` / `DATA_SOURCE`:
+- **`blocksapi`** (default) — streams from NEAR BlocksAPI. Requires `BLOCKSAPI_SERVER_ADDR` + `BLOCKSAPI_TOKEN`.
+- **`lake`** — reads from S3/GCS via `near-lake-framework`. Requires `LAKE_S3_BUCKET`, optional `LAKE_S3_REGION` (default `us-east-1`), optional `LAKE_S3_ENDPOINT` (for GCS S3-compatible access).
+
+Accounts are parameterized via `--accounts-of-interest` / `ACCOUNTS_OF_INTEREST` (comma-separated). Defaults to `intents.near,defuse-alpha.near,staging-intents.near`. For Pinet, set to `intents.far`.
+
+### Running for Pinet
+```bash
+DATA_SOURCE=lake \
+LAKE_S3_BUCKET=near-lake-data-pinet \
+LAKE_S3_ENDPOINT=https://storage.googleapis.com \
+ACCOUNTS_OF_INTEREST=intents.far \
+cargo run --release --bin near-defuse-indexer
+```
+
 ## Conventions
 - No tests exist yet
-- Env config via clap: `CommonConfig` in `indexer-common/src/config.rs` holds all shared fields (block range, Redis, metrics, OTel, BlocksAPI, concurrency). Each binary's `AppConfig` uses `#[clap(flatten)] pub common: CommonConfig` plus DB-specific fields. Shared fields accessed as `config.common.field`.
+- Env config via clap: `CommonConfig` in `indexer-common/src/config.rs` holds all shared fields (block range, Redis, metrics, OTel, concurrency). BlocksAPI fields are defined directly in each binary's `AppConfig` (not in `CommonConfig`). Each binary's `AppConfig` uses `#[clap(flatten)] pub common: CommonConfig` plus data-source and DB-specific fields. Shared fields accessed as `config.common.field`.
 - ClickHouse inserts use exponential backoff (10 retries) — lives in `indexer-clickhouse/src/database.rs`
 - Postgres inserts use manual retry loop (10 attempts) with auto-partition creation — lives in `indexer-explorer/src/database.rs`
 - Redis two-tier cache: main + potential, with TTL

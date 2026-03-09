@@ -1,6 +1,6 @@
 # NEAR Defuse Custom Indexer
 
-This project is a Rust-based indexer that processes blockchain events from NEAR Protocol and inserts them into a Clickhouse database for efficient querying. It uses [blocksapi-rs](https://github.com/defuse-protocol/blocksapi-rs) for streaming blockchain data and stores structured events in a Clickhouse database.
+This project is a Rust-based indexer that processes blockchain events from NEAR Protocol (and Pinet) and inserts them into a ClickHouse database for efficient querying. It supports two data sources: [blocksapi-rs](https://github.com/defuse-protocol/blocksapi-rs) for streaming NEAR blockchain data, and [near-lake-framework](https://github.com/near/near-lake-framework-rs) for reading from S3/GCS (used for Pinet). Structured events are stored in ClickHouse and/or PostgreSQL.
 
 ## Features
 
@@ -66,19 +66,36 @@ The ClickHouse schema is defined in `clickhouse/init/` and auto-applied on first
 
 ## Environment Configuration
 
-The indexer is configured via environment variables. The table below lists the most commonly used options. Values marked REQUIRED must be provided; others have sensible defaults or are optional depending on features you use.
+The indexer is configured via environment variables. The table below lists the most commonly used options. Values marked REQUIRED must be provided; others have sensible defaults or are optional depending on the data source.
+
+### Common variables
 
 | Variable                | Required | Description |
 |-------------------------|:--------:|-------------|
-| `CLICKHOUSE_URL`        |    Yes   | Clickhouse server URL (e.g. `http://localhost:8123`) |
-| `CLICKHOUSE_USER`       |    Yes   | Clickhouse username |
-| `CLICKHOUSE_PASSWORD`   |    Yes   | Clickhouse password |
-| `CLICKHOUSE_DATABASE`   |    Yes   | Clickhouse database name (default: `indexer`) |
+| `CLICKHOUSE_URL`        |    Yes   | ClickHouse server URL (e.g. `http://localhost:8123`) |
+| `CLICKHOUSE_USER`       |    Yes   | ClickHouse username |
+| `CLICKHOUSE_PASSWORD`   |    Yes   | ClickHouse password |
+| `CLICKHOUSE_DATABASE`   |    Yes   | ClickHouse database name (default: `indexer`) |
 | `BLOCK_HEIGHT`          |    No    | Start block height for indexing — if unset the indexer resumes from last saved state |
 | `REDIS_URL`             |    No    | Redis connection URL for caching (optional) |
 | `OUTCOME_CONCURRENCY`   |    No    | Per-outcome parallelism (default: 32) |
+| `DATA_SOURCE`           |    No    | Data source: `blocksapi` (default) or `lake` |
+| `ACCOUNTS_OF_INTEREST`  |    No    | Comma-separated account IDs to track (default: `intents.near,defuse-alpha.near,staging-intents.near`) |
+
+### BlocksAPI mode (default)
+
+| Variable                | Required | Description |
+|-------------------------|:--------:|-------------|
 | `BLOCKSAPI_SERVER_ADDR` |    Yes   | Blocks API server address |
 | `BLOCKSAPI_TOKEN`       |    Yes   | Blocks API access token |
+
+### Lake mode (S3/GCS — for Pinet)
+
+| Variable                | Required | Description |
+|-------------------------|:--------:|-------------|
+| `LAKE_S3_BUCKET`        |    Yes   | S3 bucket containing NEAR Lake data |
+| `LAKE_S3_REGION`        |    No    | S3 region (default: `us-east-1`) |
+| `LAKE_S3_ENDPOINT`      |    No    | Custom S3 endpoint URL (e.g. `https://storage.googleapis.com` for GCS) |
 
 See `.env.example` for a complete template with all options.
 
@@ -88,9 +105,19 @@ Prerequisites
 - ClickHouse and Redis running (see [Local Development](#local-development-docker-compose) above, or use your own instances).
 - Environment variables configured (copy `.env.example` to `.env` and edit).
 
-Basic run (development / single-run):
+Basic run (BlocksAPI mode — NEAR):
 
 ```bash
+cargo run --release --bin near-defuse-indexer
+```
+
+Run in Lake mode (S3/GCS — Pinet):
+
+```bash
+DATA_SOURCE=lake \
+LAKE_S3_BUCKET=near-lake-data-pinet \
+LAKE_S3_ENDPOINT=https://storage.googleapis.com \
+ACCOUNTS_OF_INTEREST=intents.far \
 cargo run --release --bin near-defuse-indexer
 ```
 
@@ -225,7 +252,7 @@ This is a Cargo workspace:
 ```
 ├── indexer-primitives/       # Shared types crate (row structs, Action, EventJson)
 ├── indexer-common/           # Shared logic: extractors, cache, config, metrics
-├── indexer-clickhouse/       # ClickHouse indexer binary (near-defuse-indexer)
+├── indexer-clickhouse/       # ClickHouse indexer binary (near-defuse-indexer, supports BlocksAPI + Lake)
 ├── indexer-explorer/         # Explorer indexer binary (indexer-explorer, PostgreSQL backend)
 ├── clickhouse/init/          # ClickHouse schema (auto-applied by docker-compose)
 ├── scripts/                  # Validation scripts (validate, cross-validate, cross-validate-pg)

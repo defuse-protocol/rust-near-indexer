@@ -43,6 +43,7 @@ pub async fn collect_outcomes_and_receipts(
     message: &near_indexer_primitives::StreamerMessage,
     receipts_cache_arc: cache::ReceiptsCacheArc,
     outcome_concurrency: usize,
+    accounts_of_interest: &[String],
 ) -> anyhow::Result<(Vec<types::ExecutionOutcomeRow>, Vec<types::ReceiptRow>)> {
     let block_height = message.block.header.height;
     let block_timestamp = message.block.header.timestamp;
@@ -62,13 +63,16 @@ pub async fn collect_outcomes_and_receipts(
         .flat_map(|shard| shard.receipt_execution_outcomes.iter())
         .collect();
 
+    let accounts_owned: Vec<String> = accounts_of_interest.to_vec();
     let mut stream = futures::stream::iter(all_outcomes.into_iter().map(|outcome| {
+        let accounts = accounts_owned.clone();
         process_single_outcome(
             outcome,
             block_height,
             block_timestamp,
             block_hash.clone(),
             receipts_cache_arc.clone(),
+            accounts,
         )
     }))
     .buffer_unordered(outcome_concurrency);
@@ -121,22 +125,28 @@ async fn process_single_outcome(
     block_timestamp: u64,
     block_hash: String,
     receipts_cache_arc: cache::ReceiptsCacheArc,
+    accounts_of_interest: Vec<String>,
 ) -> Option<(types::ExecutionOutcomeRow, types::ReceiptRow)> {
     let receipts_cache_arc = receipts_cache_arc.clone();
     let block_hash_clone = block_hash.clone();
 
     let receipt_id = outcome.receipt.receipt_id;
+    let accounts_refs: Vec<&str> = accounts_of_interest.iter().map(|s| s.as_str()).collect();
 
-    let parent_tx_opt = find_parent_tx_hash(receipt_id, outcome, &receipts_cache_arc).await;
+    let parent_tx_opt =
+        find_parent_tx_hash(receipt_id, outcome, &receipts_cache_arc, &accounts_refs).await;
 
     // If we have resolved the parent tx hash, build both outcome and receipt rows
     match parent_tx_opt {
         Some(parent_tx_hash) => {
             // If the outcome/receipt touches accounts of interest, we build rows
-            if crate::any_account_id_of_interest(&[
-                outcome.receipt.receiver_id.as_str(),
-                outcome.receipt.predecessor_id.as_str(),
-            ]) {
+            if crate::any_account_id_of_interest(
+                &[
+                    outcome.receipt.receiver_id.as_str(),
+                    outcome.receipt.predecessor_id.as_str(),
+                ],
+                &accounts_refs,
+            ) {
                 let logs_json = {
                     let logs = &outcome.execution_outcome.outcome.logs;
                     if logs.is_empty() {
@@ -250,6 +260,7 @@ async fn find_parent_tx_hash(
     receipt_id: near_primitives::hash::CryptoHash,
     outcome: &near_indexer_primitives::IndexerExecutionOutcomeWithReceipt,
     receipts_cache_arc: &cache::ReceiptsCacheArc,
+    accounts_of_interest: &[&str],
 ) -> Option<String> {
     // Looking for parent transaction hash in main cache
     let mut parent_tx_opt = match receipts_cache_arc
@@ -280,10 +291,13 @@ async fn find_parent_tx_hash(
                 parent_tx_opt = Some(p.clone());
 
                 // Promotion condition: outcome/receipt touches accounts of interest
-                if crate::any_account_id_of_interest(&[
-                    outcome.receipt.receiver_id.as_str(),
-                    outcome.receipt.predecessor_id.as_str(),
-                ]) {
+                if crate::any_account_id_of_interest(
+                    &[
+                        outcome.receipt.receiver_id.as_str(),
+                        outcome.receipt.predecessor_id.as_str(),
+                    ],
+                    accounts_of_interest,
+                ) {
                     receipts_cache_arc
                         .set(types::ReceiptOrDataId::ReceiptId(receipt_id), p.clone())
                         .await;

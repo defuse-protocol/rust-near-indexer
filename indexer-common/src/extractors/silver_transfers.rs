@@ -2,9 +2,6 @@ use std::collections::HashMap;
 
 use crate::types::{EventRow, SilverDip4TransferRow};
 
-/// Production accounts for silver_dip4_transfer (same filter as the ClickHouse MV).
-const PRODUCTION_CONTRACT_IDS: &[&str] = &["defuse-alpha.near", "intents.near"];
-
 /// Typed representation of a single item in a DIP-4 `transfer` event's data array.
 #[derive(serde::Deserialize)]
 struct TransferItem {
@@ -25,7 +22,10 @@ struct TransferItem {
 /// 1. Build a referral lookup from `dip4` / `token_diff` events.
 /// 2. Parse `dip4` / `transfer` events, flatten `tokens` map, join referral.
 /// 3. Filter to production contract IDs only.
-pub fn extract_silver_dip4_transfers(events: &[EventRow]) -> Vec<SilverDip4TransferRow> {
+pub fn extract_silver_dip4_transfers(
+    events: &[EventRow],
+    production_contract_ids: &[&str],
+) -> Vec<SilverDip4TransferRow> {
     // Step 1: Build referral lookup keyed by related_receipt_id.
     // A token_diff event's data array may contain items with a `referral` field.
     // We take the first non-null referral per receipt.
@@ -34,7 +34,7 @@ pub fn extract_silver_dip4_transfers(events: &[EventRow]) -> Vec<SilverDip4Trans
         if event.standard != "dip4" || event.event != "token_diff" {
             continue;
         }
-        if !PRODUCTION_CONTRACT_IDS.contains(&event.contract_id.as_str()) {
+        if !production_contract_ids.contains(&event.contract_id.as_str()) {
             continue;
         }
         if referral_by_receipt.contains_key(event.related_receipt_id.as_str()) {
@@ -58,7 +58,7 @@ pub fn extract_silver_dip4_transfers(events: &[EventRow]) -> Vec<SilverDip4Trans
         if event.standard != "dip4" || event.event != "transfer" {
             continue;
         }
-        if !PRODUCTION_CONTRACT_IDS.contains(&event.contract_id.as_str()) {
+        if !production_contract_ids.contains(&event.contract_id.as_str()) {
             continue;
         }
 

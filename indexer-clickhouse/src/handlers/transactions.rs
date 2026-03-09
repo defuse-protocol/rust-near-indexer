@@ -14,10 +14,15 @@ pub async fn handle_transactions(
     message: &near_indexer_primitives::StreamerMessage,
     client: &clickhouse::Client,
     receipts_cache_arc: cache::ReceiptsCacheArc,
+    accounts_of_interest: &[String],
 ) -> anyhow::Result<()> {
     let (transactions, transaction_execution_outcomes) =
-        indexer_common::extractors::transactions::extract_transactions(message, receipts_cache_arc)
-            .await?;
+        indexer_common::extractors::transactions::extract_transactions(
+            message,
+            receipts_cache_arc,
+            accounts_of_interest,
+        )
+        .await?;
 
     let result = {
         let _span = tracing::debug_span!(
