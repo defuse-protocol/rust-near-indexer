@@ -7,7 +7,7 @@ use clap::Parser;
 use config::{AppConfig, DataSource};
 use database::{get_last_height_events, get_last_height_transactions, init_clickhouse_client};
 use indexer_common::cache;
-use indexer_common::config::{BlocksApiFields, init_tracing_with_otel};
+use indexer_common::config::{BlockApiParams, init_tracing_with_otel};
 use indexer_common::metrics;
 
 #[tokio::main]
@@ -58,7 +58,7 @@ async fn main() -> anyhow::Result<()> {
     // Build data-source-specific stream receiver
     let stream = match &config.data_source {
         DataSource::Blocksapi => {
-            let ba_fields = BlocksApiFields {
+            let ba_fields = BlockApiParams {
                 blocksapi_server_addr: config.blocksapi_server_addr.clone().ok_or_else(|| {
                     anyhow::anyhow!(
                         "BLOCKSAPI_SERVER_ADDR is required when data_source is blocksapi"

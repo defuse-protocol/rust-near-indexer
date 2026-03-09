@@ -1,5 +1,5 @@
 use clap::Parser;
-use indexer_common::config::{BlocksApiFields, CommonConfig};
+use indexer_common::config::{BlockApiParams, CommonConfig};
 
 /// Application configuration for the Explorer indexer (PostgreSQL backend).
 #[derive(Parser, Clone)]
@@ -9,7 +9,7 @@ pub struct AppConfig {
     pub common: CommonConfig,
 
     #[clap(flatten)]
-    pub blocksapi: BlocksApiFields,
+    pub blocksapi: BlockApiParams,
 
     /// PostgreSQL connection URL (env: DATABASE_URL)
     #[clap(long, env = "DATABASE_URL")]

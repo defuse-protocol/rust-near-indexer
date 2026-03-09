@@ -68,7 +68,7 @@ pub struct CommonConfig {
 /// BlocksAPI-specific configuration fields.
 /// Flattened into binary AppConfigs that use BlocksAPI as their data source.
 #[derive(Parser, Clone)]
-pub struct BlocksApiFields {
+pub struct BlockApiParams {
     /// Blocks API server address (env: BLOCKSAPI_SERVER_ADDR)
     #[clap(long, env = "BLOCKSAPI_SERVER_ADDR")]
     pub blocksapi_server_addr: String,
@@ -91,7 +91,7 @@ impl CommonConfig {
 
 /// Build a BlocksApi configuration from BlocksAPI fields and a start block height.
 pub fn build_blocksapi_config(
-    blocksapi: &BlocksApiFields,
+    blocksapi: &BlockApiParams,
     start_block: u64,
 ) -> blocksapi::BlocksApiConfig {
     blocksapi::BlocksApiConfigBuilder::default()
