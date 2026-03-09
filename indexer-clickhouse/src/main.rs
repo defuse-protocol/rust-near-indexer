@@ -56,7 +56,7 @@ async fn main() -> anyhow::Result<()> {
     );
 
     // Build data-source-specific stream receiver
-    let stream = match &config.data_source {
+    let (producer_handle, stream) = match &config.data_source {
         DataSource::Blocksapi => {
             let ba_fields = BlockApiParams {
                 blocksapi_server_addr: config.blocksapi_server_addr.clone().ok_or_else(|| {
@@ -70,13 +70,11 @@ async fn main() -> anyhow::Result<()> {
             };
             let blocksapi_config =
                 indexer_common::config::build_blocksapi_config(&ba_fields, start_block);
-            let (_, stream) = blocksapi::streamer(blocksapi_config);
-            stream
+            blocksapi::streamer(blocksapi_config)
         }
         DataSource::Lake => {
             let lake_config = build_lake_config(&config, start_block).await?;
-            let (_, stream) = near_lake_framework::streamer(lake_config);
-            stream
+            near_lake_framework::streamer(lake_config)
         }
     };
 
@@ -87,7 +85,14 @@ async fn main() -> anyhow::Result<()> {
     // Initiate metrics http server
     metrics::spawn_metrics_server(&app_config.common)?;
 
-    handlers::handle_stream(stream, client, receipts_cache_arc, app_config).await?;
+    tokio::select! {
+        result = handlers::handle_stream(stream, client, receipts_cache_arc, app_config) => {
+            result?;
+        }
+        result = producer_handle => {
+            result??;
+        }
+    }
 
     Ok(())
 }
