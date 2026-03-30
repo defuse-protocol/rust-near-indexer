@@ -83,6 +83,25 @@ async fn handle_streamer_message(
         // with mappings from Receipt IDs to their parent Transaction hashes.
         transactions::handle_transactions(&message, client, receipts_cache_arc.clone(), accounts)
             .await?;
+    } else {
+        // Even in events_only mode, we need to populate the receipts cache
+        // with receipt-to-tx mappings so events can resolve their parent tx hash.
+        // We run both transaction extraction (maps tx → first receipt) and
+        // outcome/receipt extraction (chains child receipt IDs to parent tx),
+        // but skip the ClickHouse inserts.
+        indexer_common::extractors::transactions::extract_transactions(
+            &message,
+            receipts_cache_arc.clone(),
+            accounts,
+        )
+        .await?;
+        indexer_common::extractors::receipts_and_outcomes::collect_outcomes_and_receipts(
+            &message,
+            receipts_cache_arc.clone(),
+            app_config.common.outcome_concurrency,
+            accounts,
+        )
+        .await?;
     }
 
     let events_future = events::handle_events(
