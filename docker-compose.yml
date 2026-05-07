@@ -10,7 +10,7 @@ services:
       CLICKHOUSE_PASSWORD: indexer
     volumes:
       - clickhouse_data:/var/lib/clickhouse
-      - ./clickhouse/init:/docker-entrypoint-initdb.d
+      - ./clickhouse/init:/docker-entrypoint-initdb.d:z
     healthcheck:
       test: ["CMD", "clickhouse-client", "--user", "indexer", "--password", "indexer", "--query", "SELECT 1"]
       interval: 5s
