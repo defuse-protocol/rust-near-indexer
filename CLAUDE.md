@@ -59,8 +59,15 @@ Source of truth for ClickHouse schema: `clickhouse/init/*.sql`
 - `silver_transfers` (VIEW) — unified view over `silver_nep_245_events` + `silver_dip4_transfer`
 
 ### Staging tables
-- `staging_silver_dip4_transfer` — mirrors `silver_dip4_transfer` for `staging-intents.near`
-- `staging_silver_transfers` (VIEW) — mirrors `silver_transfers` for staging
+All scoped to `contract_id = 'staging-intents.near'`, mirroring their production analogs:
+- `staging_silver_dip4_transfer` — mirrors `silver_dip4_transfer`
+- `staging_silver_dip4_token_diff` — mirrors `silver_dip4_token_diff`
+- `staging_silver_dip4_public_keys` — mirrors `silver_dip4_public_keys`
+- `staging_silver_dip4_intents_executed` — mirrors `silver_dip4_intents_executed`
+- `staging_silver_dip4_fee_changed` — mirrors `silver_dip4_fee_changed`
+- `staging_silver_transfers` (VIEW) — unified view over `silver_nep_245_events` (filtered for staging) + `staging_silver_dip4_transfer`
+
+Both repo init and prod now use the post-precision-fix schema for `staging_silver_dip4_token_diff` (`Int256`, no `block_timestamp` filter). Prod was migrated 2026-05-07 via drop-and-recreate (vs the shadow-and-swap used for production silvers — staging traffic is low enough that a few minutes of empty table was acceptable).
 
 ### PostgreSQL
 Source of truth for Postgres schema: `indexer-explorer/migrations/`
