@@ -162,9 +162,23 @@ producing the old, corrupted answer:
   `coalesce(toString(amount), '')` if the consumer wants empty string for
   NULLs.
 - **Multiplying by floats** (e.g. `amount * 1e-24` for human units) forces
-  a `Float64` cast and is lossy. Use integer division
-  (`amount / pow(10, 24)`) and only convert to a float at the very last
-  step, for visual rendering.
+  a `Float64` cast and is lossy. So is `amount / pow(10, 24)` —
+  `pow` returns `Float64`, which silently promotes the whole expression
+  back to `Float64` and reintroduces the precision bug. Two correct
+  patterns:
+  - For exact scaled rendering (24 decimal places preserved):
+    `toDecimal128(amount, 24)`. `Decimal128(38, 24)` has 38 digits of
+    precision, enough to hold any `UInt128` (max ~3.4e38) with 24
+    fractional digits, and `toString` on the result preserves them
+    exactly.
+  - For pure integer scaling (drop decimals): use `intDiv` with an
+    integer literal, e.g.
+    `intDiv(amount, 1000000000000000000000000)` (24 zeros = 10^24,
+    parsed as `UInt128`). `intDiv` stays in the integer domain end to
+    end.
+
+  Convert to `Float64` only at the very last step, if at all, for visual
+  rendering.
 - **`AVG`, `STDDEV`, etc.** still return `Float64` internally; the
   underlying data is correct, but aggregates lose precision. Sums stay in
   the wide integer type and are exact.
@@ -207,6 +221,108 @@ DROP TABLE silver_dip4_token_diff_pre_migration;
   schema.
 - `silver_dip4_mt_withdraw` — prod-only, not in repo init. Audit
   separately for any precision-sensitive columns.
+## Phase 2 — token_diff reshape (also part of this PR)
+
+CodeRabbit flagged that `silver_dip4_token_diff`'s ORDER BY
+`(block_height, related_receipt_id, intent_hash)` was silently collapsing
+rows. We confirmed empirically: 49,298,911 rows expected from `events`
+vs 24,995,843 actually present (FINAL) — **49.3 % data loss**, almost
+exactly half. The MV body emits one output row per `(account_id, diff
+token entry)`, and a typical swap (one positive token + one negative
+token) produces two rows sharing the dedup key. `ReplacingMergeTree`
+keeps one of them at random and drops the other.
+
+The data analyst had already worked around this in their
+`silver_dip4_token_diff_new` table by using a wider key
+`(block_height, related_receipt_id, index_in_log, idx)` and a
+different output shape (`token_in, amount_in, token_out, amount_out,
+token_fee, amount_fee, idx, tokens_cnt, receipt_index_in_block`).
+That table preserves **all** rows (49,313,187 of an expected
+49,313,198 — gap of 11 from transient un-merged dupes).
+
+The intents-explorer consumer was already querying `_new` (not the
+buggy `silver_dip4_token_diff`), so switching the canonical schema to
+match `_new` costs them only a one-line table-rename in
+`getTokenDiffs.ts`: `silver_dip4_token_diff_new` →
+`silver_dip4_token_diff`. Column names, `toString(...)` patterns, and
+zod schemas all carry over unchanged. The other consumer query
+(`getPriceImprovementFees.ts`) hits `silver_dip4_transfer` and is
+unaffected.
+
+### What the new schema looks like
+
+`silver_dip4_token_diff` (and `staging_silver_dip4_token_diff`):
+
+- **Removed columns**: `diff_positive_token`, `diff_positive_amount`,
+  `diff_negative_token`, `diff_negative_amount` (replaced below).
+- **Added columns**: `tx_hash Nullable(String)`, `index_in_log UInt64`,
+  `tokens_cnt UInt64`, `idx UInt32`, `token_in Nullable(String)`,
+  `amount_in Nullable(Int256)`, `token_out Nullable(String)`,
+  `amount_out Nullable(Int256)`, `token_fee String`,
+  `amount_fee Int256`, `receipt_index_in_block UInt64`.
+- **Tightened nullability**: `account_id` and `intent_hash` are now
+  `Nullable(String)` (matching the analyst's pattern).
+- **Wider ORDER BY**:
+  `(block_height, related_receipt_id, index_in_log, idx)`. Each diff
+  entry within an intent now has a distinct dedup key.
+- **MV body**: rewritten to mirror `mv_silver_dip4_token_diff_new` —
+  joins `diff` with `fees_collected` from the same event, computes
+  `idx` via `arrayEnumerate`, splits the amount into `(token_in,
+  amount_in)` (when `< 0`) or `(token_out, amount_out)` (when `> 0`).
+  The `'Int256'` parser replaces the `'Float64'` parser the analyst
+  was using, so no precision regression.
+
+### Phase 2 execution (2026-05-07)
+
+Both prod tables migrated via the simple drop-and-recreate path —
+shadow-and-swap was unnecessary because `silver_dip4_token_diff` had
+no live consumers (the intents-explorer consumer was already on the
+analyst's `silver_dip4_token_diff_new`, which made the old buggy
+table effectively dead data).
+
+Sequence per table (web-UI friendly, one statement at a time):
+1. `DROP TABLE mv_silver_dip4_token_diff` (or staging equivalent) —
+   stops writes.
+2. `DROP TABLE silver_dip4_token_diff` (or staging equivalent) —
+   the buggy data is gone, regeneratable from `events`.
+3. `CREATE TABLE silver_dip4_token_diff` with the new shape from
+   `clickhouse/init/02-silver-tables.sql`.
+4. `CREATE MATERIALIZED VIEW mv_silver_dip4_token_diff TO
+   silver_dip4_token_diff` with the new body (catches forward writes
+   from this moment).
+5. Capture `cutoff = max(events.block_height)` (after MV creation, so
+   any in-flight events are caught by either MV or backfill).
+6. `INSERT INTO silver_dip4_token_diff SELECT … FROM events WHERE
+   block_height <= cutoff` — same body as the MV, with cutoff filter.
+   `ReplacingMergeTree` dedups any overlap.
+
+End state:
+
+| Table                            | Pre (buggy) | Post (correct) |
+|----------------------------------|------------:|---------------:|
+| `silver_dip4_token_diff`         |  25,003,128 |     49,305,080 |
+| `staging_silver_dip4_token_diff` |       6,527 |         13,107 |
+
+Both ≈2× — exactly the (positive_token, negative_token) pair pattern
+unmasked. ~24 M previously-collapsed rows in production are now
+visible.
+
+No `*_pre_migration` rollback for Phase 2 because we intentionally
+dropped the buggy data — it had been wrong for months and the
+consumer wasn't reading from it anyway.
+
+### Follow-ups
+
+1. Tell the intents-explorer consumer to update `getTokenDiffs.ts`:
+   change `FROM near_intents_db.silver_dip4_token_diff_new` →
+   `FROM near_intents_db.silver_dip4_token_diff` (both occurrences).
+   Column names, `toString(...)` patterns, zod schemas all carry
+   over unchanged. The other consumer query
+   (`getPriceImprovementFees.ts`) hits `silver_dip4_transfer` and is
+   unaffected.
+2. After consumer cutover + 24-48 h soak, coordinate with the data
+   analyst and drop their `silver_dip4_token_diff_new` (+ MV) — it
+   is now redundant with the canonical `silver_dip4_token_diff`.
 
 ## Repo parity with prod (also captured on this branch)
 
@@ -217,7 +333,8 @@ hand-extended onto prod and never landed in repo init. They are now in
 
 - `staging_silver_dip4_token_diff` (+ `mv_*`) — repo schema is the
   **post-fix** version (`Int256`, no `block_timestamp` filter);
-  prod migration is the deferred item above.
+  prod was migrated 2026-05-07 via drop-and-recreate (see "Out of
+  scope" above for the executed sequence).
 - `staging_silver_dip4_public_keys` (+ `mv_*`) — mirrors prod literally
   (no precision concern, keeps the `block_timestamp >= '2025-12-01'`
   filter).

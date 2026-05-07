@@ -51,7 +51,7 @@ Source of truth for ClickHouse schema: `clickhouse/init/*.sql`
 
 ### Silver tables (production)
 - `silver_nep_245_events` — NEP-245 multi-token events (mt_transfer, mt_mint, mt_burn)
-- `silver_dip4_token_diff` — DIP-4 token diffs per account per intent
+- `silver_dip4_token_diff` — DIP-4 token diffs, one row per `(intent, diff entry)`. Columns: `token_in`/`amount_in` (negative side), `token_out`/`amount_out` (positive side), `token_fee`/`amount_fee` (joined from `fees_collected`), `idx`/`tokens_cnt`/`index_in_log` for per-entry provenance. Amounts are `Int256` (raw, no scaling). Replaces and supersedes the analyst's `silver_dip4_token_diff_new` (same shape, but `Int256` instead of `Float64`).
 - `silver_dip4_public_keys` — DIP-4 public key add/remove events
 - `silver_dip4_intents_executed` — DIP-4 intent execution events
 - `silver_dip4_fee_changed` — DIP-4 fee change events

@@ -101,77 +101,138 @@ SETTINGS function_json_value_return_type_allow_nullable = true;
 -- silver_dip4_token_diff + MV
 -- ============================================================================
 
+-- Schema mirrors the analyst's silver_dip4_token_diff_new (which is what the
+-- intents-explorer consumer already queries) but with Int256 amounts instead
+-- of Float64, plus the wider ORDER BY (..., index_in_log, idx) so per-token
+-- diff entries within an intent don't collapse on merge.
+--
+-- token_in / amount_in: tokens leaving the user's balance (negative diff entry).
+-- token_out / amount_out: tokens arriving (positive diff entry).
+-- token_fee / amount_fee: fees pulled from the matching fees_collected entry.
 CREATE TABLE IF NOT EXISTS silver_dip4_token_diff (
-    block_height                UInt64 COMMENT 'The height of the block',
-    block_timestamp             DateTime64(9, 'UTC') COMMENT 'The timestamp of the block in UTC',
-    block_hash                  String COMMENT 'The hash of the block',
-    contract_id                 String COMMENT 'The ID of the account on which the execution outcome happens',
-    execution_status            String COMMENT 'The execution outcome status',
-    version                     String COMMENT 'The event version',
-    standard                    String COMMENT 'The event standard',
-    event                       String COMMENT 'The event type',
-    related_receipt_id          String COMMENT 'The execution outcome receipt ID',
-    related_receipt_receiver_id String COMMENT 'The destination account ID',
-    related_receipt_predecessor_id String COMMENT 'The account ID which issued a receipt. In case of a gas or deposit refund, the account ID is system',
-    account_id                  String COMMENT 'The token differential account ID',
-    diff_positive_token         String COMMENT 'The positive token differential',
-    diff_positive_amount        Int256 COMMENT 'The positive amount differential (raw, no decimal scaling)',
-    diff_negative_token         String COMMENT 'The negative token differential',
-    diff_negative_amount        Int256 COMMENT 'The negative amount differential (raw, no decimal scaling)',
-    intent_hash                 String COMMENT 'The hash of the intent',
-    referral                    Nullable(String) COMMENT 'The referral of the intent',
-    INDEX dif4_diff_block_timestamp_minmax_idx block_timestamp TYPE minmax GRANULARITY 1,
-    INDEX dif4_diff_contract_id_bloom_index contract_id TYPE bloom_filter() GRANULARITY 1,
-    INDEX dif4_diff_related_receipt_id_bloom_index related_receipt_id TYPE bloom_filter() GRANULARITY 1,
-    INDEX dif4_diff_related_receipt_receiver_id_bloom_index related_receipt_receiver_id TYPE bloom_filter() GRANULARITY 1
+    block_height                   UInt64               COMMENT 'The height of the block',
+    block_timestamp                DateTime64(9, 'UTC') COMMENT 'The timestamp of the block in UTC',
+    block_hash                     String               COMMENT 'The hash of the block',
+    tx_hash                        Nullable(String)     COMMENT 'The hash of transaction',
+    contract_id                    String               COMMENT 'The ID of the account on which the execution outcome happens',
+    execution_status               String               COMMENT 'The execution outcome status',
+    version                        String               COMMENT 'The event version',
+    standard                       String               COMMENT 'The event standard',
+    event                          String               COMMENT 'The event type',
+    index_in_log                   UInt64               COMMENT 'The index in the event log',
+    account_id                     Nullable(String)     COMMENT 'The token differential account ID',
+    tokens_cnt                     UInt64               COMMENT 'Number of token entries in the diff map for this intent',
+    idx                            UInt32               COMMENT '1-based position of this diff entry within the diff map',
+    token_in                       Nullable(String)     COMMENT 'Token leaving the user (negative side). Populated when amount < 0',
+    amount_in                      Nullable(Int256)     COMMENT 'Negative-side amount (raw, no decimal scaling). Populated when amount < 0',
+    token_out                      Nullable(String)     COMMENT 'Token arriving to the user (positive side). Populated when amount > 0',
+    amount_out                     Nullable(Int256)     COMMENT 'Positive-side amount (raw, no decimal scaling). Populated when amount > 0',
+    token_fee                      String               COMMENT 'Fee token (joined from fees_collected). Empty when no matching fee entry',
+    amount_fee                     Int256               COMMENT 'Fee amount (raw, no decimal scaling). 0 when no matching fee entry',
+    referral                       Nullable(String)     COMMENT 'The referral of the intent',
+    intent_hash                    Nullable(String)     COMMENT 'The hash of the intent',
+    related_receipt_id             String               COMMENT 'The execution outcome receipt ID',
+    related_receipt_receiver_id    String               COMMENT 'The destination account ID',
+    related_receipt_predecessor_id String               COMMENT 'The account ID which issued a receipt. In case of a gas or deposit refund, the account ID is system',
+    receipt_index_in_block         UInt64               COMMENT 'Index of the receipt within the block',
+    INDEX block_timestamp_minmax_idx              block_timestamp             TYPE minmax           GRANULARITY 1,
+    INDEX contract_id_bloom_index                 contract_id                 TYPE bloom_filter()   GRANULARITY 1,
+    INDEX related_receipt_id_bloom_index          related_receipt_id          TYPE bloom_filter()   GRANULARITY 1,
+    INDEX related_receipt_receiver_id_bloom_index related_receipt_receiver_id TYPE bloom_filter()   GRANULARITY 1
 ) ENGINE = ReplacingMergeTree
-PRIMARY KEY (block_height, related_receipt_id, intent_hash)
-ORDER BY (block_height, related_receipt_id, intent_hash)
+PRIMARY KEY (block_height, related_receipt_id, index_in_log, idx)
+ORDER BY     (block_height, related_receipt_id, index_in_log, idx)
 SETTINGS index_granularity = 8192;
 
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS mv_silver_dip4_token_diff TO silver_dip4_token_diff (
-    block_height                UInt64,
-    block_timestamp             DateTime64(9, 'UTC'),
-    block_hash                  String,
-    contract_id                 String,
-    execution_status            String,
-    version                     String,
-    standard                    String,
-    event                       String,
-    related_receipt_id          String,
+    block_height                   UInt64,
+    block_timestamp                DateTime64(9, 'UTC'),
+    block_hash                     String,
+    tx_hash                        Nullable(String),
+    contract_id                    String,
+    execution_status               String,
+    version                        String,
+    standard                       String,
+    event                          String,
+    index_in_log                   UInt64,
+    account_id                     Nullable(String),
+    tokens_cnt                     UInt64,
+    idx                            UInt32,
+    token_in                       Nullable(String),
+    amount_in                      Nullable(Int256),
+    token_out                      Nullable(String),
+    amount_out                     Nullable(Int256),
+    token_fee                      String,
+    amount_fee                     Int256,
+    referral                       Nullable(String),
+    intent_hash                    Nullable(String),
+    related_receipt_id             String,
+    related_receipt_receiver_id    String,
     related_receipt_predecessor_id String,
-    related_receipt_receiver_id String,
-    account_id                  String,
-    diff_positive_token         String,
-    diff_positive_amount        Int256,
-    diff_negative_token         String,
-    diff_negative_amount        Int256,
-    intent_hash                 String,
-    referral                    String
+    receipt_index_in_block         UInt64
 ) AS
-WITH decoded_events AS (
-    SELECT *, arrayJoin(JSONExtractArrayRaw(data)) AS data_row
+WITH events_ AS (
+    SELECT block_height, block_timestamp, block_hash, tx_hash, contract_id, execution_status,
+           version, standard, event, index_in_log,
+           arrayJoin(JSONExtractArrayRaw(data)) AS data_row,
+           related_receipt_id, related_receipt_receiver_id, related_receipt_predecessor_id,
+           receipt_index_in_block
     FROM events
-    WHERE (contract_id IN ('defuse-alpha.near', 'intents.near')) AND (standard = 'dip4') AND (event = 'token_diff')
-), parsed_json AS (
-    SELECT *, coalesce(JSON_VALUE(data_row, '$.account_id'), '') AS account_id,
-           coalesce(JSON_VALUE(data_row, '$.diff'), '') AS diff,
-           coalesce(JSON_VALUE(data_row, '$.intent_hash'), '') AS intent_hash,
-           coalesce(JSON_VALUE(data_row, '$.referral'), '') AS referral
-    FROM decoded_events
-), diff_kvs AS (
-    SELECT diff, arrayJoin(JSONExtractKeysAndValues(assumeNotNull(diff), 'Int256')) AS diff_kv, *
-    FROM parsed_json
+    WHERE (contract_id IN ('defuse-alpha.near', 'intents.near'))
+      AND (standard = 'dip4') AND (event = 'token_diff')
+), events_flatten_diff AS (
+    SELECT block_height, block_timestamp, block_hash, tx_hash, contract_id, execution_status,
+           version, standard, event, index_in_log,
+           JSON_VALUE(data_row, '$.account_id') AS account_id,
+           length(JSONExtractKeysAndValues(JSONExtractRaw(data_row, 'diff'), 'Int256')) AS tokens_cnt,
+           arrayJoin(arrayMap(
+               (kv, i) -> (i, kv.1, kv.2),
+               JSONExtractKeysAndValues(JSONExtractRaw(data_row, 'diff'), 'Int256'),
+               arrayEnumerate(JSONExtractKeysAndValues(JSONExtractRaw(data_row, 'diff'), 'Int256'))
+           )) AS diff,
+           JSON_VALUE(data_row, '$.intent_hash') AS intent_hash,
+           JSON_VALUE(data_row, '$.referral')    AS referral,
+           related_receipt_id, related_receipt_receiver_id, related_receipt_predecessor_id,
+           receipt_index_in_block
+    FROM events_
+), events_flatten_fees AS (
+    SELECT tx_hash, event, index_in_log,
+           arrayJoin(JSONExtractKeysAndValues(
+               assumeNotNull(JSONExtractRaw(data_row, 'fees_collected')),
+               'Int256'
+           )) AS fees_collected,
+           JSON_VALUE(data_row, '$.intent_hash') AS intent_hash,
+           related_receipt_id
+    FROM events_
+), diff_and_fee AS (
+    SELECT d.block_height, d.block_timestamp, d.block_hash, d.tx_hash, d.contract_id,
+           d.execution_status, d.version, d.standard, d.event, d.index_in_log,
+           d.account_id, d.tokens_cnt,
+           d.diff.1 AS idx, d.diff.2 AS token, d.diff.3 AS amount,
+           f.fees_collected.1 AS token_fee, f.fees_collected.2 AS amount_fee,
+           d.referral, d.intent_hash,
+           d.related_receipt_id, d.related_receipt_receiver_id, d.related_receipt_predecessor_id,
+           d.receipt_index_in_block
+    FROM events_flatten_diff AS d
+    LEFT JOIN events_flatten_fees AS f
+      ON  (d.event              = f.event)
+      AND (d.index_in_log       = f.index_in_log)
+      AND ((d.diff.2)           = (f.fees_collected.1))
+      AND (d.related_receipt_id = f.related_receipt_id)
 )
-SELECT block_height, block_timestamp, block_hash, contract_id, execution_status, version, standard, event, related_receipt_id, related_receipt_predecessor_id, related_receipt_receiver_id, account_id,
-       if((diff_kv.2) >= 0, diff_kv.1, '') AS diff_positive_token,
-       if((diff_kv.2) >= 0, diff_kv.2, 0) AS diff_positive_amount,
-       if((diff_kv.2) < 0, diff_kv.1, '') AS diff_negative_token,
-       if((diff_kv.2) < 0, diff_kv.2, 0) AS diff_negative_amount,
-       intent_hash, referral
-FROM diff_kvs
-SETTINGS function_json_value_return_type_allow_nullable = true, function_json_value_return_type_allow_complex = true;
+SELECT block_height, block_timestamp, block_hash, tx_hash, contract_id, execution_status,
+       version, standard, event, index_in_log, account_id, tokens_cnt, idx,
+       multiIf(amount < 0, token,  NULL) AS token_in,
+       multiIf(amount < 0, amount, NULL) AS amount_in,
+       multiIf(amount > 0, token,  NULL) AS token_out,
+       multiIf(amount > 0, amount, NULL) AS amount_out,
+       token_fee, amount_fee, referral, intent_hash,
+       related_receipt_id, related_receipt_receiver_id, related_receipt_predecessor_id,
+       receipt_index_in_block
+FROM diff_and_fee
+SETTINGS function_json_value_return_type_allow_nullable = true,
+         function_json_value_return_type_allow_complex  = true;
 
 
 -- ============================================================================
@@ -443,77 +504,132 @@ FROM silver_dip4_transfer;
 -- staging_silver_dip4_token_diff + MV (staging-intents.near)
 -- ============================================================================
 
+-- Same shape as silver_dip4_token_diff (the canonical, post-fix schema), but
+-- scoped to staging-intents.near.
 CREATE TABLE IF NOT EXISTS staging_silver_dip4_token_diff (
-    block_height                UInt64 COMMENT 'The height of the block',
-    block_timestamp             DateTime64(9, 'UTC') COMMENT 'The timestamp of the block in UTC',
-    block_hash                  String COMMENT 'The hash of the block',
-    contract_id                 String COMMENT 'The ID of the account on which the execution outcome happens',
-    execution_status            String COMMENT 'The execution outcome status',
-    version                     String COMMENT 'The event version',
-    standard                    String COMMENT 'The event standard',
-    event                       String COMMENT 'The event type',
-    related_receipt_id          String COMMENT 'The execution outcome receipt ID',
-    related_receipt_receiver_id String COMMENT 'The destination account ID',
-    related_receipt_predecessor_id String COMMENT 'The account ID which issued a receipt. In case of a gas or deposit refund, the account ID is system',
-    account_id                  String COMMENT 'The token differential account ID',
-    diff_positive_token         String COMMENT 'The positive token differential',
-    diff_positive_amount        Int256 COMMENT 'The positive amount differential (raw, no decimal scaling)',
-    diff_negative_token         String COMMENT 'The negative token differential',
-    diff_negative_amount        Int256 COMMENT 'The negative amount differential (raw, no decimal scaling)',
-    intent_hash                 String COMMENT 'The hash of the intent',
-    referral                    Nullable(String) COMMENT 'The referral of the intent',
-    INDEX block_timestamp_minmax_idx block_timestamp TYPE minmax GRANULARITY 1,
-    INDEX contract_id_bloom_index contract_id TYPE bloom_filter() GRANULARITY 1,
-    INDEX related_receipt_id_bloom_index related_receipt_id TYPE bloom_filter() GRANULARITY 1,
-    INDEX related_receipt_receiver_id_bloom_index related_receipt_receiver_id TYPE bloom_filter() GRANULARITY 1
+    block_height                   UInt64               COMMENT 'The height of the block',
+    block_timestamp                DateTime64(9, 'UTC') COMMENT 'The timestamp of the block in UTC',
+    block_hash                     String               COMMENT 'The hash of the block',
+    tx_hash                        Nullable(String)     COMMENT 'The hash of transaction',
+    contract_id                    String               COMMENT 'The ID of the account on which the execution outcome happens',
+    execution_status               String               COMMENT 'The execution outcome status',
+    version                        String               COMMENT 'The event version',
+    standard                       String               COMMENT 'The event standard',
+    event                          String               COMMENT 'The event type',
+    index_in_log                   UInt64               COMMENT 'The index in the event log',
+    account_id                     Nullable(String)     COMMENT 'The token differential account ID',
+    tokens_cnt                     UInt64               COMMENT 'Number of token entries in the diff map for this intent',
+    idx                            UInt32               COMMENT '1-based position of this diff entry within the diff map',
+    token_in                       Nullable(String)     COMMENT 'Token leaving the user (negative side). Populated when amount < 0',
+    amount_in                      Nullable(Int256)     COMMENT 'Negative-side amount (raw, no decimal scaling). Populated when amount < 0',
+    token_out                      Nullable(String)     COMMENT 'Token arriving to the user (positive side). Populated when amount > 0',
+    amount_out                     Nullable(Int256)     COMMENT 'Positive-side amount (raw, no decimal scaling). Populated when amount > 0',
+    token_fee                      String               COMMENT 'Fee token (joined from fees_collected). Empty when no matching fee entry',
+    amount_fee                     Int256               COMMENT 'Fee amount (raw, no decimal scaling). 0 when no matching fee entry',
+    referral                       Nullable(String)     COMMENT 'The referral of the intent',
+    intent_hash                    Nullable(String)     COMMENT 'The hash of the intent',
+    related_receipt_id             String               COMMENT 'The execution outcome receipt ID',
+    related_receipt_receiver_id    String               COMMENT 'The destination account ID',
+    related_receipt_predecessor_id String               COMMENT 'The account ID which issued a receipt. In case of a gas or deposit refund, the account ID is system',
+    receipt_index_in_block         UInt64               COMMENT 'Index of the receipt within the block',
+    INDEX block_timestamp_minmax_idx              block_timestamp             TYPE minmax           GRANULARITY 1,
+    INDEX contract_id_bloom_index                 contract_id                 TYPE bloom_filter()   GRANULARITY 1,
+    INDEX related_receipt_id_bloom_index          related_receipt_id          TYPE bloom_filter()   GRANULARITY 1,
+    INDEX related_receipt_receiver_id_bloom_index related_receipt_receiver_id TYPE bloom_filter()   GRANULARITY 1
 ) ENGINE = ReplacingMergeTree
-PRIMARY KEY (block_height, related_receipt_id, intent_hash)
-ORDER BY (block_height, related_receipt_id, intent_hash)
+PRIMARY KEY (block_height, related_receipt_id, index_in_log, idx)
+ORDER BY     (block_height, related_receipt_id, index_in_log, idx)
 SETTINGS index_granularity = 8192;
 
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS mv_staging_silver_dip4_token_diff TO staging_silver_dip4_token_diff (
-    block_height                UInt64,
-    block_timestamp             DateTime64(9, 'UTC'),
-    block_hash                  String,
-    contract_id                 String,
-    execution_status            String,
-    version                     String,
-    standard                    String,
-    event                       String,
-    related_receipt_id          String,
+    block_height                   UInt64,
+    block_timestamp                DateTime64(9, 'UTC'),
+    block_hash                     String,
+    tx_hash                        Nullable(String),
+    contract_id                    String,
+    execution_status               String,
+    version                        String,
+    standard                       String,
+    event                          String,
+    index_in_log                   UInt64,
+    account_id                     Nullable(String),
+    tokens_cnt                     UInt64,
+    idx                            UInt32,
+    token_in                       Nullable(String),
+    amount_in                      Nullable(Int256),
+    token_out                      Nullable(String),
+    amount_out                     Nullable(Int256),
+    token_fee                      String,
+    amount_fee                     Int256,
+    referral                       Nullable(String),
+    intent_hash                    Nullable(String),
+    related_receipt_id             String,
+    related_receipt_receiver_id    String,
     related_receipt_predecessor_id String,
-    related_receipt_receiver_id String,
-    account_id                  String,
-    diff_positive_token         String,
-    diff_positive_amount        Int256,
-    diff_negative_token         String,
-    diff_negative_amount        Int256,
-    intent_hash                 String,
-    referral                    String
+    receipt_index_in_block         UInt64
 ) AS
-WITH decoded_events AS (
-    SELECT *, arrayJoin(JSONExtractArrayRaw(data)) AS data_row
+WITH events_ AS (
+    SELECT block_height, block_timestamp, block_hash, tx_hash, contract_id, execution_status,
+           version, standard, event, index_in_log,
+           arrayJoin(JSONExtractArrayRaw(data)) AS data_row,
+           related_receipt_id, related_receipt_receiver_id, related_receipt_predecessor_id,
+           receipt_index_in_block
     FROM events
-    WHERE (contract_id = 'staging-intents.near') AND (standard = 'dip4') AND (event = 'token_diff')
-), parsed_json AS (
-    SELECT *, coalesce(JSON_VALUE(data_row, '$.account_id'), '') AS account_id,
-           coalesce(JSON_VALUE(data_row, '$.diff'), '') AS diff,
-           coalesce(JSON_VALUE(data_row, '$.intent_hash'), '') AS intent_hash,
-           coalesce(JSON_VALUE(data_row, '$.referral'), '') AS referral
-    FROM decoded_events
-), diff_kvs AS (
-    SELECT diff, arrayJoin(JSONExtractKeysAndValues(assumeNotNull(diff), 'Int256')) AS diff_kv, *
-    FROM parsed_json
+    WHERE (contract_id = 'staging-intents.near')
+      AND (standard = 'dip4') AND (event = 'token_diff')
+), events_flatten_diff AS (
+    SELECT block_height, block_timestamp, block_hash, tx_hash, contract_id, execution_status,
+           version, standard, event, index_in_log,
+           JSON_VALUE(data_row, '$.account_id') AS account_id,
+           length(JSONExtractKeysAndValues(JSONExtractRaw(data_row, 'diff'), 'Int256')) AS tokens_cnt,
+           arrayJoin(arrayMap(
+               (kv, i) -> (i, kv.1, kv.2),
+               JSONExtractKeysAndValues(JSONExtractRaw(data_row, 'diff'), 'Int256'),
+               arrayEnumerate(JSONExtractKeysAndValues(JSONExtractRaw(data_row, 'diff'), 'Int256'))
+           )) AS diff,
+           JSON_VALUE(data_row, '$.intent_hash') AS intent_hash,
+           JSON_VALUE(data_row, '$.referral')    AS referral,
+           related_receipt_id, related_receipt_receiver_id, related_receipt_predecessor_id,
+           receipt_index_in_block
+    FROM events_
+), events_flatten_fees AS (
+    SELECT tx_hash, event, index_in_log,
+           arrayJoin(JSONExtractKeysAndValues(
+               assumeNotNull(JSONExtractRaw(data_row, 'fees_collected')),
+               'Int256'
+           )) AS fees_collected,
+           JSON_VALUE(data_row, '$.intent_hash') AS intent_hash,
+           related_receipt_id
+    FROM events_
+), diff_and_fee AS (
+    SELECT d.block_height, d.block_timestamp, d.block_hash, d.tx_hash, d.contract_id,
+           d.execution_status, d.version, d.standard, d.event, d.index_in_log,
+           d.account_id, d.tokens_cnt,
+           d.diff.1 AS idx, d.diff.2 AS token, d.diff.3 AS amount,
+           f.fees_collected.1 AS token_fee, f.fees_collected.2 AS amount_fee,
+           d.referral, d.intent_hash,
+           d.related_receipt_id, d.related_receipt_receiver_id, d.related_receipt_predecessor_id,
+           d.receipt_index_in_block
+    FROM events_flatten_diff AS d
+    LEFT JOIN events_flatten_fees AS f
+      ON  (d.event              = f.event)
+      AND (d.index_in_log       = f.index_in_log)
+      AND ((d.diff.2)           = (f.fees_collected.1))
+      AND (d.related_receipt_id = f.related_receipt_id)
 )
-SELECT block_height, block_timestamp, block_hash, contract_id, execution_status, version, standard, event, related_receipt_id, related_receipt_predecessor_id, related_receipt_receiver_id, account_id,
-       if((diff_kv.2) >= 0, diff_kv.1, '') AS diff_positive_token,
-       if((diff_kv.2) >= 0, diff_kv.2, 0) AS diff_positive_amount,
-       if((diff_kv.2) < 0, diff_kv.1, '') AS diff_negative_token,
-       if((diff_kv.2) < 0, diff_kv.2, 0) AS diff_negative_amount,
-       intent_hash, referral
-FROM diff_kvs
-SETTINGS function_json_value_return_type_allow_nullable = true, function_json_value_return_type_allow_complex = true;
+SELECT block_height, block_timestamp, block_hash, tx_hash, contract_id, execution_status,
+       version, standard, event, index_in_log, account_id, tokens_cnt, idx,
+       multiIf(amount < 0, token,  NULL) AS token_in,
+       multiIf(amount < 0, amount, NULL) AS amount_in,
+       multiIf(amount > 0, token,  NULL) AS token_out,
+       multiIf(amount > 0, amount, NULL) AS amount_out,
+       token_fee, amount_fee, referral, intent_hash,
+       related_receipt_id, related_receipt_receiver_id, related_receipt_predecessor_id,
+       receipt_index_in_block
+FROM diff_and_fee
+SETTINGS function_json_value_return_type_allow_nullable = true,
+         function_json_value_return_type_allow_complex  = true;
 
 
 -- ============================================================================

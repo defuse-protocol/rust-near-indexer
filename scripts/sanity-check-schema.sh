@@ -52,6 +52,15 @@ ch_query() {
         --data-binary "$1"
 }
 
+# Like ch_query but exits non-zero on HTTP 4xx/5xx. Use when the only thing
+# you care about is whether the query compiled / executed cleanly. Plain -sS
+# returns exit code 0 on HTTP errors, which would silently pass these checks.
+ch_ok() {
+    curl -fsS "${CH_URL}/?database=${CH_DATABASE}" \
+        --user "${CH_USER}:${CH_PASSWORD}" \
+        --data-binary "$1" >/dev/null
+}
+
 trim() { tr -d '[:space:]'; }
 
 pass() { echo "  PASS  $1"; }
@@ -154,12 +163,12 @@ fi
 # ── 5. Unified UNION views compile ───────────────────────────────────────────
 echo "=== UNION views ==="
 
-if ch_query "SELECT count() FROM silver_transfers" >/dev/null 2>&1; then
+if ch_ok "SELECT count() FROM silver_transfers"; then
     pass "silver_transfers UNION executes"
 else
     fail "silver_transfers UNION failed"
 fi
-if ch_query "SELECT count() FROM staging_silver_transfers" >/dev/null 2>&1; then
+if ch_ok "SELECT count() FROM staging_silver_transfers"; then
     pass "staging_silver_transfers UNION executes"
 else
     fail "staging_silver_transfers UNION failed"

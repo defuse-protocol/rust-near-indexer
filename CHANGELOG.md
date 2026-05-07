@@ -10,15 +10,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - **Silver-layer numeric precision** — `silver_nep_245_events.amount`,
   `silver_dip4_transfer.amount`, and `staging_silver_dip4_transfer.amount`
-  changed from `Nullable(Float64)` to `Nullable(UInt128)`;
-  `silver_dip4_token_diff.diff_positive_amount` and
-  `silver_dip4_token_diff.diff_negative_amount` changed from `Float64` to
-  `Int256`. The old `Float64` columns silently rounded raw u128 token
-  amounts past 2^53. Consumer-facing impact: queries that did
-  `printf('%.0f', amount)` re-introduced the precision loss; use
-  `toString(amount)` instead. See
+  changed from `Nullable(Float64)` to `Nullable(UInt128)`. The old
+  `Float64` columns silently rounded raw u128 token amounts past 2^53.
+  Consumer-facing impact: queries that did `printf('%.0f', amount)`
+  re-introduced the precision loss; use `toString(amount)` instead. See
   `docs/migrations/2026-05-silver-uint128.md` for the full migration
   story, headline numbers, and the executed cutover sequence.
+- **`silver_dip4_token_diff` and `staging_silver_dip4_token_diff` reshaped
+  to match the analyst's `silver_dip4_token_diff_new`** — the `(diff_positive_*,
+  diff_negative_*)` shape on `Float64` is replaced with the
+  `(token_in, amount_in, token_out, amount_out, token_fee, amount_fee)`
+  shape on `Int256`, plus new payload columns `tx_hash`, `index_in_log`,
+  `idx`, `tokens_cnt`, `receipt_index_in_block`. The old narrow ORDER BY
+  `(block_height, related_receipt_id, intent_hash)` was silently
+  collapsing ~50% of token_diff rows because the MV emits one row per
+  diff token entry but the dedup key wasn't unique-per-entry; new
+  ORDER BY `(block_height, related_receipt_id, index_in_log, idx)`
+  preserves every entry. Consumer-facing impact: `silver_dip4_token_diff`
+  is now an in-place replacement for `silver_dip4_token_diff_new`
+  (same shape, but with `Int256` amounts); consumers querying `_new`
+  should switch to `silver_dip4_token_diff` and the old
+  `_new` table can be dropped after migration.
 
 ### Added
 
