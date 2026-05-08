@@ -75,6 +75,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- **Receipts cache simplified to a single keyspace.** The previous main /
+  potential split (with promotion logic) is gone — every tx → receipt-id
+  mapping the indexer sees is now written to `receipt_cache:<id>`
+  unconditionally, bounded by `redis_ttl_seconds`. Lookup is a single
+  `get`; no fallback, no promotion. Functionally equivalent to before
+  (both keyspaces shared the same TTL anyway), just less code on the hot
+  path. The `potential_asset_miss_total` and `promotions_total` metrics
+  are removed; observability for the cache-miss class shifts to the
+  existing `rows_with_null_tx_hash_total` (which is where genuine misses
+  surface, since callers no longer drop rows on miss).
 - `mv_silver_nep_245_events` and `mv_silver_dip4_token_diff` bodies in
   `clickhouse/init/02-silver-tables.sql` no longer filter on
   `block_timestamp`. The old filters silently excluded ~60k + ~24k

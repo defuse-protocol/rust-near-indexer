@@ -75,8 +75,10 @@ async fn extract_transaction_rows(
     Ok(transactions)
 }
 
-/// Parse a transaction and update the receipts cache if it's related to accounts of interest.
-/// Also updates the potential cache for transactions not directly related to accounts of interest.
+/// Parse a transaction. Always writes the (converted_into_receipt_id -> tx_hash) mapping into
+/// the unified receipts cache so descendant receipts that land on tracked contracts can resolve
+/// the parent tx. Returns a `TransactionRow` only when the tx itself touches an account of
+/// interest.
 async fn parse_transaction(
     tx: near_indexer_primitives::IndexerTransactionWithOutcome,
     block_height: u64,
@@ -94,6 +96,17 @@ async fn parse_transaction(
         .first()
         .expect("`receipt_ids` must contain one Receipt Id");
 
+    // Always cache the (converted_into_receipt_id -> transaction_hash) mapping. The cache is
+    // a single keyspace; whether or not the tx itself touches an account of interest, any of
+    // its descendant receipts may eventually land on a tracked contract and need to look up
+    // the parent tx hash. The TTL bounds memory; warmup at startup populates breadcrumbs.
+    receipts_cache_arc
+        .set(
+            types::ReceiptOrDataId::ReceiptId(*converted_into_receipt_id),
+            transaction_hash.clone(),
+        )
+        .await;
+
     if crate::any_account_id_of_interest(
         &[
             tx.transaction.signer_id.as_str(),
@@ -101,18 +114,6 @@ async fn parse_transaction(
         ],
         accounts_of_interest,
     ) {
-        // Save this Transaction hash to ReceiptsCache
-        // we use the Receipt ID to which this transaction was converted
-        // and the Transaction hash as a value.
-        // Later, while Receipt will be looking for a parent Transaction hash
-        // it will be able to find it in the ReceiptsCache
-        receipts_cache_arc
-            .set(
-                types::ReceiptOrDataId::ReceiptId(*converted_into_receipt_id),
-                transaction_hash.clone(),
-            )
-            .await;
-
         Some(types::TransactionRow {
             block_height,
             block_timestamp,
@@ -130,20 +131,6 @@ async fn parse_transaction(
             .expect("Failed to serialize actions for transaction"),
         })
     } else {
-        // We set a potential mapping in the potential cache
-        // so that if we see a receipt related to an account of interest
-        // we can still find the parent transaction hash
-        tracing::debug!(
-            target: crate::config::INDEXER,
-            "Add receipt to potential cache: {}",
-            converted_into_receipt_id,
-        );
-        receipts_cache_arc
-            .potential_set(
-                types::ReceiptOrDataId::ReceiptId(*converted_into_receipt_id),
-                transaction_hash.clone(),
-            )
-            .await;
         None
     }
 }
@@ -208,7 +195,7 @@ async fn parse_transaction_execution_outcome(
             block_hash: block_hash.clone(),
             execution_outcome_id: tx.outcome.execution_outcome.id.to_string(),
             executor_id: tx.outcome.execution_outcome.outcome.executor_id.to_string(),
-            parent_transaction_hash: tx.transaction.hash.to_string(),
+            parent_transaction_hash: Some(tx.transaction.hash.to_string()),
             status: parse_status(tx.outcome.execution_outcome.outcome.status.clone()),
             gas_burnt: tx.outcome.execution_outcome.outcome.gas_burnt.as_gas(),
             tokens_burnt: tx
