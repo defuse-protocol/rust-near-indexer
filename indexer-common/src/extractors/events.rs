@@ -203,14 +203,16 @@ async fn parse_event(
         }
     }
 
-    let Some(tx_hash) = tx_hash else {
+    if tx_hash.is_none() {
         tracing::warn!(
             target: crate::config::INDEXER,
-            "Could not resolve parent tx hash for receipt_id: {}",
-            outcome.receipt.receipt_id
+            receipt_id = %outcome.receipt.receipt_id,
+            "Could not resolve parent tx hash; writing event with NULL tx_hash"
         );
-        return Ok(None);
-    };
+        crate::metrics::ROWS_WITH_NULL_TX_HASH_TOTAL
+            .with_label_values(&["events"])
+            .inc();
+    }
 
     Ok(Some(EventRow {
         block_height: header.height,
@@ -226,7 +228,7 @@ async fn parse_event(
         related_receipt_id: outcome.receipt.receipt_id.to_string(),
         related_receipt_receiver_id: outcome.receipt.receiver_id.to_string(),
         related_receipt_predecessor_id: outcome.receipt.predecessor_id.to_string(),
-        tx_hash: Some(tx_hash),
+        tx_hash,
         receipt_index_in_block,
     }))
 }

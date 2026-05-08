@@ -8,6 +8,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **Indexer no longer drops events / receipts / execution_outcomes when the
+  parent transaction hash cannot be resolved from the receipt cache.** A
+  bridge deposit reaches a tracked contract (e.g. `intents.near`) via
+  intermediaries on accounts not in `accounts_of_interest` (e.g.
+  `bridge-mng.near` → `btc.omft.near` → `intents.near`). BlocksAPI doesn't
+  deliver the originating tx in that case, so the receipt cache has no
+  parent-tx mapping for the leaf receipt — and the row was silently
+  dropped at `indexer-common/src/extractors/events.rs` and
+  `indexer-common/src/extractors/receipts_and_outcomes.rs`. Rows now land
+  with `tx_hash = NULL` (events) / `parent_transaction_hash = NULL`
+  (receipts, execution_outcomes) and are observable via the new
+  `rows_with_null_tx_hash_total{row_type=…}` metric. Schema updated:
+  `receipts.parent_transaction_hash` and
+  `execution_outcomes.parent_transaction_hash` are now `Nullable(String)`
+  (events.tx_hash was already nullable). The three silver MVs that flow
+  events.tx_hash into a non-nullable silver column
+  (`mv_silver_nep_245_events`, `mv_silver_dip4_transfer`,
+  `mv_staging_silver_dip4_transfer`) now coalesce NULL → empty string in
+  their final SELECT to keep the silver-side `tx_hash String` columns
+  intact. Historical events that were already dropped need a separate
+  re-index pass to recover.
 - **Silver-layer numeric precision** — `silver_nep_245_events.amount`,
   `silver_dip4_transfer.amount`, and `staging_silver_dip4_transfer.amount`
   changed from `Nullable(Float64)` to `Nullable(UInt128)`. The old

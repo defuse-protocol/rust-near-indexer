@@ -69,6 +69,19 @@ lazy_static! {
         &["asset_type"]
     ).unwrap();
 
+    // Counts rows written with a NULL parent transaction hash because the receipt
+    // cache could not resolve it. Expected non-zero for cross-contract flows where
+    // the originating tx is on an account not in `accounts_of_interest` (e.g. a
+    // bridge deposit reaching a tracked contract via untracked intermediaries) —
+    // BlocksAPI doesn't deliver the originating tx in that case, so we never
+    // cache a parent-tx mapping. Rather than dropping the row, we write it with
+    // tx_hash = NULL and bump this metric.
+    pub static ref ROWS_WITH_NULL_TX_HASH_TOTAL: IntGaugeVec = register_int_gauge_vec(
+        "rows_with_null_tx_hash_total",
+        "Rows written with a NULL parent tx hash because cache lookup failed",
+        &["row_type"] // values: events / receipts / execution_outcomes
+    ).unwrap();
+
     pub static ref STORE_ERRORS_TOTAL: IntCounter = try_create_int_counter(
         "total_tx_store_errors",
         "Total number of errors while storing transactions"
