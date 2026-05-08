@@ -73,8 +73,15 @@ async fn main() -> anyhow::Result<()> {
             blocksapi::streamer(blocksapi_config)
         }
         DataSource::Lake => {
-            let lake_config = build_lake_config(&config, start_block).await?;
-            near_lake_framework::streamer(lake_config)
+            // TEMPORARILY DISABLED: blocksapi v0.2.2 pulled near-indexer-primitives 0.35.x,
+            // while near-lake-framework 0.7 is still on 0.34.x — the StreamerMessage types
+            // are nominally distinct across the two indexer-primitives versions, so the
+            // BlocksAPI and Lake match arms can't yield the same stream type. Restore Lake
+            // when near-lake-framework ships a 0.35-compatible release (or we fork/patch).
+            anyhow::bail!(
+                "Lake data source is temporarily disabled while near-lake-framework catches \
+                 up to near-indexer-primitives 0.35. Use DATA_SOURCE=blocksapi for now."
+            )
         }
     };
 
@@ -97,6 +104,9 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+// Kept around for when Lake is re-enabled (see the bail in the DataSource::Lake match arm
+// above). Don't delete — it preserves the Pinet config wiring.
+#[allow(dead_code)]
 async fn build_lake_config(
     config: &AppConfig,
     start_block: u64,

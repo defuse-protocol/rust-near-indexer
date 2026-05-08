@@ -6,8 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-05-08
+
 ### Fixed
 
+- **Indexer no longer misses chain blocks for cross-shard receipt chains.**
+  Bumped `blocksapi` to v0.2.2, which closes a per-block delivery gap on
+  the upstream stream. Verified end-to-end against block range
+  196366373..196366380: previously absent blocks 196366377 and 196366378
+  are now delivered, and the bridge-deposit chain
+  (`bridge-mng.near` → `omft.near` → `btc.omft.near` → `intents.near`)
+  reconstructs the parent_tx_hash for the leaf receipt at 196366379
+  without RPC fallback. Combined with the NULL-tx_hash drop fix below,
+  the indexer's pipeline now captures these flows end-to-end.
 - **Indexer no longer drops events / receipts / execution_outcomes when the
   parent transaction hash cannot be resolved from the receipt cache.**
   Operators with persistent ClickHouse deployments must run the migration
@@ -62,6 +73,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- `Action::TransferToGasKey` and `Action::WithdrawFromGasKey` variants in
+  `indexer-primitives::Action` (and matching arms in
+  `TryFrom<&ActionView>`), introduced in `near-primitives` 0.35.x via
+  the `blocksapi` v0.2.2 bump.
 - `silver_nep_245_events.index_in_log` and `receipt_index_in_block`
   (`UInt64`). Added to the table's `ORDER BY` so that legitimate per-log
   duplicates are no longer collapsed by `ReplacingMergeTree`.
@@ -82,6 +97,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- Workspace version `0.4.1` → `0.5.0`.
+- `blocksapi` dependency: tag `v0.2.0` → `v0.2.2`. The newer client closes
+  the chain-block delivery gap noted in the Fixed section. This pulls
+  `near-indexer-primitives` 0.35.x, which is incompatible with
+  `near-lake-framework` 0.7.x's 0.34.x. The Lake data source
+  (`DataSource::Lake`, used for Pinet ingestion) is therefore
+  **temporarily disabled** with a clear `bail!` at startup until
+  `near-lake-framework` ships a 0.35-compatible release. Production
+  BlocksAPI ingestion is unaffected. Tracked as a separate follow-up.
 - **Receipts cache simplified to a single keyspace.** The previous main /
   potential split (with promotion logic) is gone — every tx → receipt-id
   mapping the indexer sees is now written to `receipt_cache:<id>`
