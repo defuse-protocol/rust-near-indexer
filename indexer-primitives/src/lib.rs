@@ -105,6 +105,8 @@ pub enum Action {
     DeployGlobalContract(near_primitives::action::DeployGlobalContractAction),
     UseGlobalContract(Box<near_primitives::action::UseGlobalContractAction>),
     DeterministicStateInit(Box<near_primitives::action::DeterministicStateInitAction>),
+    TransferToGasKey(Box<near_primitives::action::TransferToGasKeyAction>),
+    WithdrawFromGasKey(Box<near_primitives::action::WithdrawFromGasKeyAction>),
 }
 
 /// Denormalized row for silver-level DIP-4 transfer data.
@@ -155,6 +157,8 @@ impl TryFrom<&near_primitives::views::ActionView> for Action {
             near_primitives::action::Action::DeterministicStateInit(a) => {
                 Action::DeterministicStateInit(a)
             }
+            near_primitives::action::Action::TransferToGasKey(a) => Action::TransferToGasKey(a),
+            near_primitives::action::Action::WithdrawFromGasKey(a) => Action::WithdrawFromGasKey(a),
         })
     }
 }
