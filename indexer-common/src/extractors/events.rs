@@ -140,8 +140,11 @@ async fn parse_event(
         return Ok(None);
     }
 
-    // 4. Resolve parent tx hash (only now do cache lookups)
-    let mut tx_hash = match receipts_cache_arc
+    // 4. Resolve parent tx hash. Single-keyspace lookup; cache holds every tx -> receipt-id
+    //    mapping the indexer has seen. A miss here means we genuinely don't have it (typically
+    //    a cross-contract chain whose originating tx was never delivered upstream); fall
+    //    through to the NULL-tx_hash write path below.
+    let tx_hash = match receipts_cache_arc
         .get(&crate::types::ReceiptOrDataId::ReceiptId(
             outcome.receipt.receipt_id,
         ))
@@ -159,58 +162,16 @@ async fn parse_event(
         }
     };
 
-    let accounts_refs: Vec<&str> = accounts_of_interest.iter().map(|s| s.as_str()).collect();
-    if tx_hash.is_none()
-        && crate::any_account_id_of_interest(
-            &[
-                outcome.receipt.receiver_id.as_str(),
-                outcome.receipt.predecessor_id.as_str(),
-            ],
-            &accounts_refs,
-        )
-    {
-        match receipts_cache_arc
-            .potential_get(&crate::types::ReceiptOrDataId::ReceiptId(
-                outcome.receipt.receipt_id,
-            ))
-            .await
-        {
-            Ok(Some(parent)) => {
-                receipts_cache_arc
-                    .set(
-                        crate::types::ReceiptOrDataId::ReceiptId(outcome.receipt.receipt_id),
-                        parent.clone(),
-                    )
-                    .await;
-                crate::metrics::PROMOTIONS_TOTAL
-                    .with_label_values(&["events"])
-                    .inc();
-                tx_hash = Some(parent);
-            }
-            Ok(None) => {
-                crate::metrics::POTENTIAL_ASSET_MISS_TOTAL
-                    .with_label_values(&["events"])
-                    .inc();
-            }
-            Err(err) => {
-                tracing::debug!(
-                    target: crate::config::INDEXER,
-                    receipt_id=%outcome.receipt.receipt_id,
-                    error=%err,
-                    "redis potential_get failed for event"
-                );
-            }
-        }
-    }
-
-    let Some(tx_hash) = tx_hash else {
+    if tx_hash.is_none() {
         tracing::warn!(
             target: crate::config::INDEXER,
-            "Could not resolve parent tx hash for receipt_id: {}",
-            outcome.receipt.receipt_id
+            receipt_id = %outcome.receipt.receipt_id,
+            "Could not resolve parent tx hash; writing event with NULL tx_hash"
         );
-        return Ok(None);
-    };
+        crate::metrics::ROWS_WITH_NULL_TX_HASH_TOTAL
+            .with_label_values(&["events"])
+            .inc();
+    }
 
     Ok(Some(EventRow {
         block_height: header.height,
@@ -226,7 +187,7 @@ async fn parse_event(
         related_receipt_id: outcome.receipt.receipt_id.to_string(),
         related_receipt_receiver_id: outcome.receipt.receiver_id.to_string(),
         related_receipt_predecessor_id: outcome.receipt.predecessor_id.to_string(),
-        tx_hash: Some(tx_hash),
+        tx_hash,
         receipt_index_in_block,
     }))
 }

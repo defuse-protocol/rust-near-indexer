@@ -92,7 +92,9 @@ WITH decoded_events AS (
     SELECT *, (arrayJoin(arrayZip(token_ids, amounts)) AS t).1 AS token_id, t.2 AS amount
     FROM tokens
 )
-SELECT block_height, block_timestamp, block_hash, tx_hash, contract_id, execution_status, version, standard, event, related_receipt_id, related_receipt_receiver_id, related_receipt_predecessor_id, memo, old_owner_id, new_owner_id, replaceAll(token_id, '"', '') AS token_id, CAST(replaceAll(amount, '"', ''), 'Nullable(UInt128)') AS amount, index_in_log, receipt_index_in_block
+-- coalesce: events.tx_hash is Nullable; silver_nep_245_events.tx_hash is non-nullable
+-- so unresolvable parent tx hashes land here as empty string rather than failing the insert.
+SELECT block_height, block_timestamp, block_hash, coalesce(tx_hash, '') AS tx_hash, contract_id, execution_status, version, standard, event, related_receipt_id, related_receipt_receiver_id, related_receipt_predecessor_id, memo, old_owner_id, new_owner_id, replaceAll(token_id, '"', '') AS token_id, CAST(replaceAll(amount, '"', ''), 'Nullable(UInt128)') AS amount, index_in_log, receipt_index_in_block
 FROM tokens_flattened
 SETTINGS function_json_value_return_type_allow_nullable = true;
 
@@ -463,7 +465,10 @@ WITH decoded_events AS (
     SELECT *, (arrayJoin(token_pairs) AS tp).1 AS token_id, tp.2 AS amount_str
     FROM parsed
 )
-SELECT block_height, block_timestamp, block_hash, tx_hash, contract_id, execution_status, version, standard, event, related_receipt_id, related_receipt_receiver_id, related_receipt_predecessor_id, memo, old_owner_id, new_owner_id, token_id, CAST(replaceAll(amount_str, '"', ''), 'Nullable(UInt128)') AS amount, intent_hash
+-- coalesce: events.tx_hash is Nullable; the silver dip4_transfer tables hold tx_hash
+-- as non-nullable String, so unresolvable parent tx hashes land here as empty string
+-- rather than failing the insert.
+SELECT block_height, block_timestamp, block_hash, coalesce(tx_hash, '') AS tx_hash, contract_id, execution_status, version, standard, event, related_receipt_id, related_receipt_receiver_id, related_receipt_predecessor_id, memo, old_owner_id, new_owner_id, token_id, CAST(replaceAll(amount_str, '"', ''), 'Nullable(UInt128)') AS amount, intent_hash
 FROM tokens_flattened
 SETTINGS function_json_value_return_type_allow_nullable = true, function_json_value_return_type_allow_complex = true;
 
@@ -860,7 +865,10 @@ WITH decoded_events AS (
     SELECT *, (arrayJoin(token_pairs) AS tp).1 AS token_id, tp.2 AS amount_str
     FROM parsed
 )
-SELECT block_height, block_timestamp, block_hash, tx_hash, contract_id, execution_status, version, standard, event, related_receipt_id, related_receipt_receiver_id, related_receipt_predecessor_id, memo, old_owner_id, new_owner_id, token_id, CAST(replaceAll(amount_str, '"', ''), 'Nullable(UInt128)') AS amount, intent_hash
+-- coalesce: events.tx_hash is Nullable; the silver dip4_transfer tables hold tx_hash
+-- as non-nullable String, so unresolvable parent tx hashes land here as empty string
+-- rather than failing the insert.
+SELECT block_height, block_timestamp, block_hash, coalesce(tx_hash, '') AS tx_hash, contract_id, execution_status, version, standard, event, related_receipt_id, related_receipt_receiver_id, related_receipt_predecessor_id, memo, old_owner_id, new_owner_id, token_id, CAST(replaceAll(amount_str, '"', ''), 'Nullable(UInt128)') AS amount, intent_hash
 FROM tokens_flattened
 SETTINGS function_json_value_return_type_allow_nullable = true, function_json_value_return_type_allow_complex = true;
 

@@ -6,24 +6,18 @@
 //!    (avoids a second independent iteration over chunks/receipts)
 //!
 //! Cache strategy:
-//!  * Main cache stores definitive mapping: receipt_or_data_id -> parent_tx_hash.
-//!  * Potential cache holds speculative parent tx hashes for receipts that might become
-//!    relevant; promotion happens if an outcome/receipt touches an account of interest.
+//!  * Single keyspace: receipt_or_data_id -> parent_tx_hash. Every tx we see gets cached
+//!    regardless of whether its receiver is in `accounts_of_interest` — bounded by TTL.
 //!  * While iterating an execution outcome we also immediately map all child receipt ids
 //!    it spawns to the parent tx (eliminates follow-up pass previously required).
 //!
 //! What we intentionally dropped versus earlier multi-phase version:
 //!  * Separate extraction functions for outcomes and receipts.
-//!  * Post-pass cache population of potential mappings.
 //!  * Per-element async fan-out (simple synchronous loop is cheaper & sufficient here).
-//!
-//! Observability:
-//!  * A single span wraps collection.
-//!  * Promotions / potential misses logged at info/debug for cache tuning.
-//!
-//! Metrics:
-//!  * Totals/captured metrics preserved for continuity.
-//!  * Potential misses still increment POTENTIAL_ASSET_MISS_TOTAL.
+//!  * The earlier two-keyspace cache (main + potential, with promotion logic). A miss
+//!    on the unified cache is now a real miss (typically a cross-contract chain whose
+//!    originating tx was never delivered upstream); callers handle it by writing rows
+//!    with NULL parent_transaction_hash, observable via ROWS_WITH_NULL_TX_HASH_TOTAL.
 //!
 //! Keep inline comments focused on cache edge cases; names should explain everything else.
 
@@ -133,137 +127,156 @@ async fn process_single_outcome(
     let receipt_id = outcome.receipt.receipt_id;
     let accounts_refs: Vec<&str> = accounts_of_interest.iter().map(|s| s.as_str()).collect();
 
-    let parent_tx_opt =
-        find_parent_tx_hash(receipt_id, outcome, &receipts_cache_arc, &accounts_refs).await;
+    let parent_tx_opt = find_parent_tx_hash(receipt_id, &receipts_cache_arc).await;
 
-    // If we have resolved the parent tx hash, build both outcome and receipt rows
-    match parent_tx_opt {
-        Some(parent_tx_hash) => {
-            // If the outcome/receipt touches accounts of interest, we build rows
-            if crate::any_account_id_of_interest(
-                &[
-                    outcome.receipt.receiver_id.as_str(),
-                    outcome.receipt.predecessor_id.as_str(),
-                ],
-                &accounts_refs,
-            ) {
-                let logs_json = {
-                    let logs = &outcome.execution_outcome.outcome.logs;
-                    if logs.is_empty() {
-                        "[]".to_string()
-                    } else {
-                        serde_json::to_string(logs).unwrap_or_else(|err| {
-                            tracing::error!(
-                                target: crate::config::INDEXER,
-                                error=%err,
-                                "Failed to serialize logs"
-                            );
-                            "[]".to_string()
-                        })
-                    }
-                };
-                let receipt_ids: Vec<types::ReceiptOrDataId> = outcome
-                    .execution_outcome
-                    .outcome
-                    .receipt_ids
-                    .iter()
-                    .map(|id| types::ReceiptOrDataId::ReceiptId(*id))
-                    .collect();
+    // Whether this outcome/receipt is one we want to emit rows for. The cache-resolution
+    // gate (parent_tx_opt) is independent: if the chain originated on an untracked account
+    // BlocksAPI never delivered the originating tx, so we have no parent-tx mapping — but
+    // the leaf receipt is still on a tracked account and the row is still useful. In that
+    // case we write the row with parent_transaction_hash = NULL rather than dropping it.
+    let of_interest = crate::any_account_id_of_interest(
+        &[
+            outcome.receipt.receiver_id.as_str(),
+            outcome.receipt.predecessor_id.as_str(),
+        ],
+        &accounts_refs,
+    );
 
-                let outcome_row = types::ExecutionOutcomeRow {
-                    block_height,
-                    block_timestamp,
-                    block_hash: block_hash_clone.clone(),
-                    execution_outcome_id: outcome.execution_outcome.id.to_string(),
-                    parent_transaction_hash: parent_tx_hash.clone(),
-                    executor_id: outcome.execution_outcome.outcome.executor_id.to_string(),
-                    status: parse_status(outcome.execution_outcome.outcome.status.clone()),
-                    logs: logs_json,
-                    tokens_burnt: outcome.execution_outcome.outcome.tokens_burnt.to_string(),
-                    gas_burnt: outcome.execution_outcome.outcome.gas_burnt.as_gas(),
-                    receipt_ids: receipt_ids.iter().map(|id| id.to_string()).collect(),
-                };
-
-                // The receipts that are created by this ExecutionOutcome need to be mapped to the same parent tx hash
-                // and added to the cache
-                receipts_cache_arc
-                    .set_many_receipts(receipt_ids, &parent_tx_hash)
-                    .await;
-
-                // Receipt row
-                let r_view = &outcome.receipt;
-                let actions_json = match r_view.receipt {
-                    near_primitives::views::ReceiptEnumView::Action { ref actions, .. } => {
-                        serde_json::to_string(
-                            &actions
-                                .iter()
-                                .filter_map(|a| types::Action::try_from(a).ok())
-                                .collect::<Vec<types::Action>>(),
-                        )
-                        .unwrap_or_else(|err| {
-                            tracing::error!(
-                                target: crate::config::INDEXER,
-                                "Failed to serialize actions for receipt: {}",
-                                err
-                            );
-                            "[]".to_string()
-                        })
-                    }
-                    near_primitives::views::ReceiptEnumView::Data { ref data, .. } => {
-                        serde_json::to_string(data).unwrap_or_else(|err| {
-                            tracing::warn!(
-                                target: crate::config::INDEXER,
-                                "Failed to serialize receipt data: {}",
-                                err
-                            );
-                            "null".to_string()
-                        })
-                    }
-                    near_primitives::views::ReceiptEnumView::GlobalContractDistribution {
-                        ..
-                    } => "".to_string(),
-                };
-                let receipt_row = types::ReceiptRow {
-                    block_height,
-                    block_timestamp,
-                    block_hash: block_hash_clone.clone(),
-                    parent_transaction_hash: parent_tx_hash,
-                    receipt_id: r_view.receipt_id.to_string(),
-                    receiver_id: r_view.receiver_id.to_string(),
-                    predecessor_id: r_view.predecessor_id.to_string(),
-                    actions: actions_json,
-                };
-                Some((outcome_row, receipt_row))
-            } else {
-                // If outcome/receipt is not relevant, we still need to populate the cache
-                // We need to collect the receipt ids produced by this outcome to the potential cache
-                let child_ids: Vec<types::ReceiptOrDataId> = outcome
-                    .execution_outcome
-                    .outcome
-                    .receipt_ids
-                    .iter()
-                    .map(|c| types::ReceiptOrDataId::ReceiptId(*c))
-                    .collect();
-
-                receipts_cache_arc
-                    .set_many_potentials(child_ids, &parent_tx_hash)
-                    .await;
-                None
-            }
+    if of_interest {
+        if parent_tx_opt.is_none() {
+            tracing::warn!(
+                target: crate::config::INDEXER,
+                receipt_id = %receipt_id,
+                "Could not resolve parent tx hash; writing outcome/receipt with NULL parent_transaction_hash"
+            );
+            crate::metrics::ROWS_WITH_NULL_TX_HASH_TOTAL
+                .with_label_values(&["execution_outcomes"])
+                .inc();
+            crate::metrics::ROWS_WITH_NULL_TX_HASH_TOTAL
+                .with_label_values(&["receipts"])
+                .inc();
         }
-        None => None,
+
+        let logs_json = {
+            let logs = &outcome.execution_outcome.outcome.logs;
+            if logs.is_empty() {
+                "[]".to_string()
+            } else {
+                serde_json::to_string(logs).unwrap_or_else(|err| {
+                    tracing::error!(
+                        target: crate::config::INDEXER,
+                        error=%err,
+                        "Failed to serialize logs"
+                    );
+                    "[]".to_string()
+                })
+            }
+        };
+        let receipt_ids: Vec<types::ReceiptOrDataId> = outcome
+            .execution_outcome
+            .outcome
+            .receipt_ids
+            .iter()
+            .map(|id| types::ReceiptOrDataId::ReceiptId(*id))
+            .collect();
+
+        let outcome_row = types::ExecutionOutcomeRow {
+            block_height,
+            block_timestamp,
+            block_hash: block_hash_clone.clone(),
+            execution_outcome_id: outcome.execution_outcome.id.to_string(),
+            parent_transaction_hash: parent_tx_opt.clone(),
+            executor_id: outcome.execution_outcome.outcome.executor_id.to_string(),
+            status: parse_status(outcome.execution_outcome.outcome.status.clone()),
+            logs: logs_json,
+            tokens_burnt: outcome.execution_outcome.outcome.tokens_burnt.to_string(),
+            gas_burnt: outcome.execution_outcome.outcome.gas_burnt.as_gas(),
+            receipt_ids: receipt_ids.iter().map(|id| id.to_string()).collect(),
+        };
+
+        // Only propagate the parent-tx mapping to children when we actually have one.
+        if let Some(ref parent_tx_hash) = parent_tx_opt {
+            receipts_cache_arc
+                .set_many_receipts(receipt_ids, parent_tx_hash)
+                .await;
+        }
+
+        // Receipt row
+        let r_view = &outcome.receipt;
+        let actions_json = match r_view.receipt {
+            near_primitives::views::ReceiptEnumView::Action { ref actions, .. } => {
+                serde_json::to_string(
+                    &actions
+                        .iter()
+                        .filter_map(|a| types::Action::try_from(a).ok())
+                        .collect::<Vec<types::Action>>(),
+                )
+                .unwrap_or_else(|err| {
+                    tracing::error!(
+                        target: crate::config::INDEXER,
+                        "Failed to serialize actions for receipt: {}",
+                        err
+                    );
+                    "[]".to_string()
+                })
+            }
+            near_primitives::views::ReceiptEnumView::Data { ref data, .. } => {
+                serde_json::to_string(data).unwrap_or_else(|err| {
+                    tracing::warn!(
+                        target: crate::config::INDEXER,
+                        "Failed to serialize receipt data: {}",
+                        err
+                    );
+                    "null".to_string()
+                })
+            }
+            near_primitives::views::ReceiptEnumView::GlobalContractDistribution { .. } => {
+                "".to_string()
+            }
+        };
+        let receipt_row = types::ReceiptRow {
+            block_height,
+            block_timestamp,
+            block_hash: block_hash_clone.clone(),
+            parent_transaction_hash: parent_tx_opt,
+            receipt_id: r_view.receipt_id.to_string(),
+            receiver_id: r_view.receiver_id.to_string(),
+            predecessor_id: r_view.predecessor_id.to_string(),
+            actions: actions_json,
+        };
+        Some((outcome_row, receipt_row))
+    } else {
+        // Not-of-interest: don't emit rows, but still propagate the parent-tx mapping into
+        // the unified receipts cache for any descendant receipts (only useful when we actually
+        // resolved a parent — phantom mappings would just be noise).
+        if let Some(parent_tx_hash) = parent_tx_opt {
+            let child_ids: Vec<types::ReceiptOrDataId> = outcome
+                .execution_outcome
+                .outcome
+                .receipt_ids
+                .iter()
+                .map(|c| types::ReceiptOrDataId::ReceiptId(*c))
+                .collect();
+
+            receipts_cache_arc
+                .set_many_receipts(child_ids, &parent_tx_hash)
+                .await;
+        }
+        None
     }
 }
 
-// === Cache lookup with potential promotion ===
+// === Cache lookup ===
+// Single-keyspace lookup. The receipt cache is now unified: every tx -> receipt-id mapping
+// the indexer sees is written to `receipt_cache:<id>` regardless of whether the receiver is
+// in `accounts_of_interest`. A miss here means we genuinely don't have the parent — typical
+// for cross-contract chains where the originating tx was never delivered to us by the
+// upstream framework. Callers handle None by writing rows with NULL parent_transaction_hash.
 async fn find_parent_tx_hash(
     receipt_id: near_primitives::hash::CryptoHash,
-    outcome: &near_indexer_primitives::IndexerExecutionOutcomeWithReceipt,
     receipts_cache_arc: &cache::ReceiptsCacheArc,
-    accounts_of_interest: &[&str],
 ) -> Option<String> {
-    // Looking for parent transaction hash in main cache
-    let mut parent_tx_opt = match receipts_cache_arc
+    match receipts_cache_arc
         .get(&types::ReceiptOrDataId::ReceiptId(receipt_id))
         .await
     {
@@ -277,52 +290,5 @@ async fn find_parent_tx_hash(
             );
             None
         }
-    };
-
-    // If we haven't found the parent transaction hash in the main cache,
-    // we try the potential cache and promote it to main if the outcome/receipt
-    // is relevant (touches accounts of interest)
-    if parent_tx_opt.is_none() {
-        match receipts_cache_arc
-            .potential_get(&types::ReceiptOrDataId::ReceiptId(receipt_id))
-            .await
-        {
-            Ok(Some(p)) => {
-                parent_tx_opt = Some(p.clone());
-
-                // Promotion condition: outcome/receipt touches accounts of interest
-                if crate::any_account_id_of_interest(
-                    &[
-                        outcome.receipt.receiver_id.as_str(),
-                        outcome.receipt.predecessor_id.as_str(),
-                    ],
-                    accounts_of_interest,
-                ) {
-                    receipts_cache_arc
-                        .set(types::ReceiptOrDataId::ReceiptId(receipt_id), p.clone())
-                        .await;
-                    crate::metrics::PROMOTIONS_TOTAL
-                        .with_label_values(&["execution_outcomes"])
-                        .inc();
-                }
-            }
-            Ok(None) => {
-                // This means we had messed up the potential cache population logic
-                // around the handling of the execution outcomes.outcome.receipt_ids.
-                crate::metrics::POTENTIAL_ASSET_MISS_TOTAL
-                    .with_label_values(&["execution_outcomes"])
-                    .inc();
-            }
-            Err(err) => {
-                tracing::warn!(
-                    target: crate::config::INDEXER,
-                    receipt_id=%receipt_id,
-                    error=%err,
-                    "redis potential_get failed (skip miss metric)"
-                );
-            }
-        }
     }
-
-    parent_tx_opt
 }

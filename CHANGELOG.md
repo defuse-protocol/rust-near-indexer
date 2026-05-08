@@ -8,6 +8,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **Indexer no longer drops events / receipts / execution_outcomes when the
+  parent transaction hash cannot be resolved from the receipt cache.**
+  Operators with persistent ClickHouse deployments must run the migration
+  in `docs/migrations/2026-05-indexer-null-tx-hash.md` before deploying
+  this build. `CREATE TABLE IF NOT EXISTS` in `01-core-tables.sql` is a
+  no-op against existing tables, so the column-type changes won't apply
+  automatically and the new binary's nullable serialization will be
+  rejected (`CANNOT_READ_ALL_DATA`) until `parent_transaction_hash` is
+  ALTERed to `Nullable(String)` on `receipts` and `execution_outcomes`. A
+  bridge deposit reaches a tracked contract (e.g. `intents.near`) via
+  intermediaries on accounts not in `accounts_of_interest` (e.g.
+  `bridge-mng.near` → `btc.omft.near` → `intents.near`). BlocksAPI doesn't
+  deliver the originating tx in that case, so the receipt cache has no
+  parent-tx mapping for the leaf receipt — and the row was silently
+  dropped at `indexer-common/src/extractors/events.rs` and
+  `indexer-common/src/extractors/receipts_and_outcomes.rs`. Rows now land
+  with `tx_hash = NULL` (events) / `parent_transaction_hash = NULL`
+  (receipts, execution_outcomes) and are observable via the new
+  `rows_with_null_tx_hash_total{row_type=…}` metric. Schema updated:
+  `receipts.parent_transaction_hash` and
+  `execution_outcomes.parent_transaction_hash` are now `Nullable(String)`
+  (events.tx_hash was already nullable). The three silver MVs that flow
+  events.tx_hash into a non-nullable silver column
+  (`mv_silver_nep_245_events`, `mv_silver_dip4_transfer`,
+  `mv_staging_silver_dip4_transfer`) now coalesce NULL → empty string in
+  their final SELECT to keep the silver-side `tx_hash String` columns
+  intact. Historical events that were already dropped need a separate
+  re-index pass to recover.
 - **Silver-layer numeric precision** — `silver_nep_245_events.amount`,
   `silver_dip4_transfer.amount`, and `staging_silver_dip4_transfer.amount`
   changed from `Nullable(Float64)` to `Nullable(UInt128)`. The old
@@ -54,6 +82,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- **Receipts cache simplified to a single keyspace.** The previous main /
+  potential split (with promotion logic) is gone — every tx → receipt-id
+  mapping the indexer sees is now written to `receipt_cache:<id>`
+  unconditionally, bounded by `redis_ttl_seconds`. Lookup is a single
+  `get`; no fallback, no promotion. Functionally equivalent to before
+  (both keyspaces shared the same TTL anyway), just less code on the hot
+  path. The `potential_asset_miss_total` and `promotions_total` metrics
+  are removed; observability for the cache-miss class shifts to the
+  existing `rows_with_null_tx_hash_total` (which is where genuine misses
+  surface, since callers no longer drop rows on miss).
 - `mv_silver_nep_245_events` and `mv_silver_dip4_token_diff` bodies in
   `clickhouse/init/02-silver-tables.sql` no longer filter on
   `block_timestamp`. The old filters silently excluded ~60k + ~24k

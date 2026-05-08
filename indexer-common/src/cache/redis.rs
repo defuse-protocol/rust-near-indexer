@@ -19,9 +19,7 @@ impl RedisReceiptCache {
     fn key_receipt(id: &ReceiptOrDataId) -> String {
         format!("receipt_cache:{}", Self::id_str(id))
     }
-    fn key_potential(id: &ReceiptOrDataId) -> String {
-        format!("potential_cache:{}", Self::id_str(id))
-    }
+
     fn id_str(id: &ReceiptOrDataId) -> String {
         match id {
             ReceiptOrDataId::ReceiptId(h) => h.to_string(),
@@ -90,82 +88,11 @@ impl RedisReceiptCache {
         }
     }
 
-    pub async fn potential_get(
-        &self,
-        key: &ReceiptOrDataId,
-    ) -> anyhow::Result<Option<ParentTransactionHashString>> {
-        let redis_key = Self::key_potential(key);
-        let start = std::time::Instant::now();
-        let mut conn = self.manager.clone();
-        let res = conn
-            .get::<_, Option<ParentTransactionHashString>>(&redis_key)
-            .await;
-        match res {
-            Ok(v) => {
-                tracing::debug!(
-                    target: crate::config::INDEXER,
-                    op="potential_get",
-                    key=%redis_key,
-                    hit=v.is_some(),
-                    ms=%start.elapsed().as_millis(),
-                    "redis potential_get succeeded"
-                );
-                Ok(v)
-            }
-            Err(err) => {
-                tracing::warn!(
-                    target: crate::config::INDEXER,
-                    op="potential_get",
-                    key=%redis_key,
-                    error=%err,
-                    "redis potential_get failed"
-                );
-                Err(err.into())
-            }
-        }
-    }
-
-    pub async fn potential_set(&self, key: ReceiptOrDataId, value: ParentTransactionHashString) {
-        let redis_key = Self::key_potential(&key);
-        let mut conn = self.manager.clone();
-        if let Err(err) = conn
-            .set_ex::<_, _, ()>(redis_key.clone(), value, self.ttl_seconds)
-            .await
-        {
-            tracing::warn!(
-                target: crate::config::INDEXER,
-                op="potential_set",
-                key=%redis_key,
-                error=%err,
-                "redis potential_set failed"
-            );
-        }
-    }
-    // Batches multiple SETEX calls into a single pipeline.
+    /// Batches multiple SETEX calls into a single pipeline. Same TTL as `set`.
     pub async fn set_many_receipts(
         &self,
         keys: Vec<ReceiptOrDataId>,
         value: &ParentTransactionHashString,
-    ) {
-        self.internal_set_many_receipts(keys, value, Self::key_receipt)
-            .await;
-    }
-
-    // Batches multiple SETEX calls into a single pipeline (potential)
-    pub async fn set_many_potentials(
-        &self,
-        keys: Vec<ReceiptOrDataId>,
-        value: &ParentTransactionHashString,
-    ) {
-        self.internal_set_many_receipts(keys, value, Self::key_potential)
-            .await;
-    }
-
-    async fn internal_set_many_receipts(
-        &self,
-        keys: Vec<ReceiptOrDataId>,
-        value: &ParentTransactionHashString,
-        key_fn: fn(&ReceiptOrDataId) -> String,
     ) {
         if keys.is_empty() {
             return;
@@ -174,7 +101,7 @@ impl RedisReceiptCache {
         let mut conn = self.manager.clone();
         let mut pipe = redis::pipe();
         for k in keys {
-            let redis_key = key_fn(&k);
+            let redis_key = Self::key_receipt(&k);
             // Use modern SET with EX instead of legacy SETEX
             pipe.cmd("SET")
                 .arg(&redis_key)
