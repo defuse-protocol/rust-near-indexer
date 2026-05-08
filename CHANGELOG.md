@@ -9,7 +9,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Fixed
 
 - **Indexer no longer drops events / receipts / execution_outcomes when the
-  parent transaction hash cannot be resolved from the receipt cache.** A
+  parent transaction hash cannot be resolved from the receipt cache.**
+  Operators with persistent ClickHouse deployments must run the migration
+  in `docs/migrations/2026-05-indexer-null-tx-hash.md` before deploying
+  this build. `CREATE TABLE IF NOT EXISTS` in `01-core-tables.sql` is a
+  no-op against existing tables, so the column-type changes won't apply
+  automatically and the new binary's nullable serialization will be
+  rejected (`CANNOT_READ_ALL_DATA`) until `parent_transaction_hash` is
+  ALTERed to `Nullable(String)` on `receipts` and `execution_outcomes`. A
   bridge deposit reaches a tracked contract (e.g. `intents.near`) via
   intermediaries on accounts not in `accounts_of_interest` (e.g.
   `bridge-mng.near` → `btc.omft.near` → `intents.near`). BlocksAPI doesn't
