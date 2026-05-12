@@ -2,6 +2,8 @@ mod config;
 mod database;
 mod handlers;
 
+use std::time::Duration;
+
 use clap::Parser;
 
 use config::{AppConfig, DataSource};
@@ -9,6 +11,11 @@ use database::{get_last_height_events, get_last_height_transactions, init_clickh
 use indexer_common::cache;
 use indexer_common::config::{BlockApiParams, init_tracing_with_otel};
 use indexer_common::metrics;
+
+/// Delay before rebuilding the BlocksAPI streamer after a transient producer error
+/// (e.g. h2 "error reading a body from connection"). Small enough that the cache
+/// stays warm; large enough that we don't hammer the upstream on a real outage.
+const RECONNECT_BACKOFF: Duration = Duration::from_secs(2);
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -55,23 +62,18 @@ async fn main() -> anyhow::Result<()> {
         start_block
     );
 
-    // Build data-source-specific stream receiver
-    let (producer_handle, stream) = match &config.data_source {
-        DataSource::Blocksapi => {
-            let ba_fields = BlockApiParams {
-                blocksapi_server_addr: config.blocksapi_server_addr.clone().ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "BLOCKSAPI_SERVER_ADDR is required when data_source is blocksapi"
-                    )
-                })?,
-                blocksapi_token: config.blocksapi_token.clone().ok_or_else(|| {
-                    anyhow::anyhow!("BLOCKSAPI_TOKEN is required when data_source is blocksapi")
-                })?,
-            };
-            let blocksapi_config =
-                indexer_common::config::build_blocksapi_config(&ba_fields, start_block);
-            blocksapi::streamer(blocksapi_config)
-        }
+    // Validate data-source-specific config once, up-front. The actual streamer is
+    // rebuilt inside the reconnect loop below so we can resume from in-RAM state
+    // after a transient producer error (e.g. h2 stream cut).
+    let ba_fields = match &config.data_source {
+        DataSource::Blocksapi => BlockApiParams {
+            blocksapi_server_addr: config.blocksapi_server_addr.clone().ok_or_else(|| {
+                anyhow::anyhow!("BLOCKSAPI_SERVER_ADDR is required when data_source is blocksapi")
+            })?,
+            blocksapi_token: config.blocksapi_token.clone().ok_or_else(|| {
+                anyhow::anyhow!("BLOCKSAPI_TOKEN is required when data_source is blocksapi")
+            })?,
+        },
         DataSource::Lake => {
             // TEMPORARILY DISABLED: blocksapi v0.2.2 pulled near-indexer-primitives 0.35.x,
             // while near-lake-framework 0.7 is still on 0.34.x — the StreamerMessage types
@@ -92,13 +94,86 @@ async fn main() -> anyhow::Result<()> {
     // Initiate metrics http server
     metrics::spawn_metrics_server(&app_config.common)?;
 
-    tokio::select! {
-        result = handlers::handle_stream(stream, client, receipts_cache_arc, app_config) => {
-            result?;
+    // In-RAM cursor of the highest block this process has successfully processed.
+    // Reuses `metrics::LATEST_BLOCK_HEIGHT` (a `prometheus::IntGauge`, internally
+    // atomic, set exactly once per successful block in `handle_streamer_message`).
+    // MUST stay in-process — a reindexer and the live indexer share the same DB
+    // at very different heights, so a DB `max(block_height)` would drag the
+    // reindexer to the tip and silently abandon historical work in flight.
+    let block_end = app_config.common.block_end;
+
+    loop {
+        let resume_from = match metrics::LATEST_BLOCK_HEIGHT.get() {
+            0 => start_block,
+            h => (h as u64) + 1,
+        };
+
+        if let Some(end) = block_end
+            && resume_from > end
+        {
+            tracing::info!(
+                target: indexer_common::config::INDEXER,
+                "block_end={} already reached at {}, exiting.",
+                end,
+                resume_from - 1
+            );
+            break;
         }
-        result = producer_handle => {
-            result??;
+
+        tracing::info!(
+            target: indexer_common::config::INDEXER,
+            "Building BlocksAPI stream from block {}",
+            resume_from
+        );
+        let blocksapi_config =
+            indexer_common::config::build_blocksapi_config(&ba_fields, resume_from);
+        let (producer_handle, stream) = blocksapi::streamer(blocksapi_config);
+
+        tokio::select! {
+            result = handlers::handle_stream(
+                stream,
+                client.clone(),
+                receipts_cache_arc.clone(),
+                app_config.clone(),
+            ) => {
+                result?;
+                // Consumer returned Ok — either block_end was reached (handled at
+                // top of next iteration) or the producer dropped the channel and
+                // the stream drained cleanly. In the latter case, loop to reconnect.
+                let last = metrics::LATEST_BLOCK_HEIGHT.get();
+                if let Some(end) = block_end
+                    && (last as u64) >= end
+                {
+                    break;
+                }
+                tracing::warn!(
+                    target: indexer_common::config::INDEXER,
+                    "Stream ended without reaching block_end (last_processed={}); reconnecting after {:?}",
+                    last,
+                    RECONNECT_BACKOFF
+                );
+            }
+            result = producer_handle => {
+                match result {
+                    Ok(Ok(())) => tracing::warn!(
+                        target: indexer_common::config::INDEXER,
+                        "BlocksAPI producer task finished unexpectedly; reconnecting"
+                    ),
+                    Ok(Err(e)) => tracing::warn!(
+                        target: indexer_common::config::INDEXER,
+                        error = %e,
+                        "BlocksAPI producer stream error; reconnecting"
+                    ),
+                    Err(e) => tracing::warn!(
+                        target: indexer_common::config::INDEXER,
+                        error = %e,
+                        "BlocksAPI producer task panicked or was cancelled; reconnecting"
+                    ),
+                }
+            }
         }
+
+        tokio::time::sleep(RECONNECT_BACKOFF).await;
     }
 
     Ok(())
