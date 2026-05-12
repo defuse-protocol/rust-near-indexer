@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-05-12
+
+### Fixed
+
+- **Indexer no longer dies on transient BlocksAPI producer errors during long
+  reindex jobs.** Symptom: `h2 protocol error: error reading a body from
+  connection` (and similar transient `tonic::Status` failures from the
+  upstream stream) propagated out of the producer task and aborted the
+  process, forcing operators to restart manually with
+  `--force-from-block-height` set to the last logged block. Both
+  `near-defuse-indexer` (ClickHouse) and `indexer-explorer` (Postgres) now
+  wrap the streamer build + `tokio::select!` in a reconnect loop that
+  resumes from `metrics::LATEST_BLOCK_HEIGHT` (a `prometheus::IntGauge`,
+  internally atomic, already set per successful block) with a 2s backoff
+  between attempts. The cursor is intentionally **not** sourced from the
+  destination DB on reconnect — a reindexer and the live indexer share
+  the same DB at very different heights, so DB `max(block_height)` would
+  drag the reindexer forward to the tip and silently drop the historical
+  work in flight. Consumer-side errors (real bugs — ClickHouse/Postgres
+  insert failures, extractor panics) still propagate immediately. No
+  CLI/env changes.
+
 ## [0.5.0] - 2026-05-08
 
 ### Fixed

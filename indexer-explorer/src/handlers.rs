@@ -16,13 +16,11 @@ const ACCOUNTS_OF_INTEREST: &[&str] =
 const PRODUCTION_CONTRACT_IDS: &[&str] = &["defuse-alpha.near", "intents.near"];
 
 pub async fn handle_stream(
-    config: blocksapi::BlocksApiConfig,
+    stream: tokio::sync::mpsc::Receiver<StreamerMessage>,
     pool: PgPool,
     receipts_cache_arc: cache::ReceiptsCacheArc,
     app_config: std::sync::Arc<AppConfig>,
 ) -> anyhow::Result<()> {
-    let (_, stream) = blocksapi::streamer(config);
-
     let block_end = app_config.common.block_end;
     if let Some(end) = block_end {
         tracing::info!(
