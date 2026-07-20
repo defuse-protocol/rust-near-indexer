@@ -17,7 +17,7 @@ rust-version = "1.90.0"
 actix-web = "4.5.1"
 actix-web-httpauth = "0.8.2"
 anyhow = "1.0.51"
-blocksapi = { git = "https://github.com/defuse-protocol/blocksapi-rs.git", tag = "v0.2.3" }
+blocksapi = { git = "https://github.com/defuse-protocol/blocksapi-rs.git", tag = "v0.2.4" }
 clap = { version = "4.5", features = ["derive", "env"] }
 dotenv = "0.15.0"
 futures = "0.3.5"

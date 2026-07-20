@@ -55,7 +55,7 @@ pub async fn insert_rows(
     let retry_strategy = tokio_retry::strategy::ExponentialBackoff::from_millis(250)
         .max_delay(std::time::Duration::from_secs(60))
         .take(SAVE_ATTEMPTS);
-    tokio_retry::Retry::spawn(retry_strategy, || async {
+    tokio_retry::Retry::start(retry_strategy, || async {
         try_insert_rows(client, table, rows).await.map_err(|err| {
             indexer_common::metrics::DATABASE_INSERT_RETRIES_TOTAL.inc();
             tracing::warn!(
