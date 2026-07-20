@@ -102,6 +102,7 @@ pub enum Action {
     DeleteKey(Box<near_primitives::action::DeleteKeyAction>),
     DeleteAccount(near_primitives::action::DeleteAccountAction),
     Delegate(Box<near_primitives::action::delegate::SignedDelegateAction>),
+    DelegateV2(Box<near_primitives::action::delegate::VersionedSignedDelegateAction>),
     DeployGlobalContract(near_primitives::action::DeployGlobalContractAction),
     UseGlobalContract(Box<near_primitives::action::UseGlobalContractAction>),
     DeterministicStateInit(Box<near_primitives::action::DeterministicStateInitAction>),
@@ -150,6 +151,7 @@ impl TryFrom<&near_primitives::views::ActionView> for Action {
             near_primitives::action::Action::DeleteKey(a) => Action::DeleteKey(a),
             near_primitives::action::Action::DeleteAccount(a) => Action::DeleteAccount(a),
             near_primitives::action::Action::Delegate(a) => Action::Delegate(a),
+            near_primitives::action::Action::DelegateV2(a) => Action::DelegateV2(a),
             near_primitives::action::Action::DeployGlobalContract(a) => {
                 Action::DeployGlobalContract(a)
             }
