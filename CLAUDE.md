@@ -131,6 +131,7 @@ Before finishing any code change, always:
 The `near-defuse-indexer` binary supports two data sources, selected via `--data-source` / `DATA_SOURCE`:
 - **`blocksapi`** (default) — streams from NEAR BlocksAPI. Requires `BLOCKSAPI_SERVER_ADDR` + `BLOCKSAPI_TOKEN`.
 - **`lake`** — reads from S3/GCS via `near-lake-framework`. Requires `LAKE_S3_BUCKET`, optional `LAKE_S3_REGION` (default `us-east-1`), optional `LAKE_S3_ENDPOINT` (for GCS S3-compatible access).
+  - `near-lake-framework` 0.7 is on `near-indexer-primitives` 0.34, `blocksapi` on 0.37. `lake_streamer()` in `indexer-clickhouse/src/main.rs` bridges them with a per-block JSON round-trip; a decode failure is fatal (no reconnect loop). Remove the bridge once Lake ships on the same primitives. Lake was silently disabled from 0.5.0 until this fix, which broke Pinet as soon as it pulled a newer "latest" binary: keep the Pinet VM pinned to a timestamped build from `gs://near-indexer-builds`.
 
 Accounts are parameterized via `--accounts-of-interest` / `ACCOUNTS_OF_INTEREST` (comma-separated). Defaults to `intents.near,defuse-alpha.near,staging-intents.near`. For Pinet, set to `intents.far`.
 

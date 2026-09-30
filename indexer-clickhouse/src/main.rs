@@ -6,16 +6,27 @@ use std::time::Duration;
 
 use clap::Parser;
 
+use blocksapi::near_indexer_primitives::StreamerMessage;
 use config::{AppConfig, DataSource};
 use database::{get_last_height_events, get_last_height_transactions, init_clickhouse_client};
 use indexer_common::cache;
 use indexer_common::config::{BlockApiParams, init_tracing_with_otel};
 use indexer_common::metrics;
 
-/// Delay before rebuilding the BlocksAPI streamer after a transient producer error
+/// Delay before rebuilding the block streamer after a transient producer error
 /// (e.g. h2 "error reading a body from connection"). Small enough that the cache
 /// stays warm; large enough that we don't hammer the upstream on a real outage.
 const RECONNECT_BACKOFF: Duration = Duration::from_secs(2);
+
+/// Buffer between the Lake streamer and the 0.34 → 0.37 conversion task. Lake
+/// already preloads blocks on its own side, so this only needs to absorb jitter.
+const LAKE_CONVERTED_BUFFER: usize = 100;
+
+/// Data-source settings validated once, before the reconnect loop.
+enum StreamSource {
+    Blocksapi(BlockApiParams),
+    Lake,
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -65,25 +76,19 @@ async fn main() -> anyhow::Result<()> {
     // Validate data-source-specific config once, up-front. The actual streamer is
     // rebuilt inside the reconnect loop below so we can resume from in-RAM state
     // after a transient producer error (e.g. h2 stream cut).
-    let ba_fields = match &config.data_source {
-        DataSource::Blocksapi => BlockApiParams {
+    let stream_source = match &config.data_source {
+        DataSource::Blocksapi => StreamSource::Blocksapi(BlockApiParams {
             blocksapi_server_addr: config.blocksapi_server_addr.clone().ok_or_else(|| {
                 anyhow::anyhow!("BLOCKSAPI_SERVER_ADDR is required when data_source is blocksapi")
             })?,
             blocksapi_token: config.blocksapi_token.clone().ok_or_else(|| {
                 anyhow::anyhow!("BLOCKSAPI_TOKEN is required when data_source is blocksapi")
             })?,
-        },
+        }),
         DataSource::Lake => {
-            // TEMPORARILY DISABLED: blocksapi v0.2.2 pulled near-indexer-primitives 0.35.x,
-            // while near-lake-framework 0.7 is still on 0.34.x — the StreamerMessage types
-            // are nominally distinct across the two indexer-primitives versions, so the
-            // BlocksAPI and Lake match arms can't yield the same stream type. Restore Lake
-            // when near-lake-framework ships a 0.35-compatible release (or we fork/patch).
-            anyhow::bail!(
-                "Lake data source is temporarily disabled while near-lake-framework catches \
-                 up to near-indexer-primitives 0.35. Use DATA_SOURCE=blocksapi for now."
-            )
+            // Built here only to fail fast on bad config; rebuilt per reconnect below.
+            build_lake_config(&config, start_block).await?;
+            StreamSource::Lake
         }
     };
 
@@ -122,12 +127,15 @@ async fn main() -> anyhow::Result<()> {
 
         tracing::info!(
             target: indexer_common::config::INDEXER,
-            "Building BlocksAPI stream from block {}",
+            "Building block stream from block {}",
             resume_from
         );
-        let blocksapi_config =
-            indexer_common::config::build_blocksapi_config(&ba_fields, resume_from);
-        let (producer_handle, stream) = blocksapi::streamer(blocksapi_config);
+        let (producer_handle, stream) = match &stream_source {
+            StreamSource::Blocksapi(blocksapi_params) => blocksapi::streamer(
+                indexer_common::config::build_blocksapi_config(blocksapi_params, resume_from),
+            ),
+            StreamSource::Lake => lake_streamer(build_lake_config(&app_config, resume_from).await?),
+        };
 
         tokio::select! {
             result = handlers::handle_stream(
@@ -157,17 +165,23 @@ async fn main() -> anyhow::Result<()> {
                 match result {
                     Ok(Ok(())) => tracing::warn!(
                         target: indexer_common::config::INDEXER,
-                        "BlocksAPI producer task finished unexpectedly; reconnecting"
+                        "Producer task finished unexpectedly; reconnecting"
                     ),
+                    // Deterministic, so reconnecting would retry the same block forever.
+                    // Both the Lake 0.34 → 0.37 conversion and a malformed Lake block
+                    // land here.
+                    Ok(Err(e)) if e.is::<serde_json::Error>() => {
+                        return Err(e.context("Failed to decode block from the stream"));
+                    }
                     Ok(Err(e)) => tracing::warn!(
                         target: indexer_common::config::INDEXER,
                         error = %e,
-                        "BlocksAPI producer stream error; reconnecting"
+                        "Producer stream error; reconnecting"
                     ),
                     Err(e) => tracing::warn!(
                         target: indexer_common::config::INDEXER,
                         error = %e,
-                        "BlocksAPI producer task panicked or was cancelled; reconnecting"
+                        "Producer task panicked or was cancelled; reconnecting"
                     ),
                 }
             }
@@ -179,9 +193,37 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-// Kept around for when Lake is re-enabled (see the bail in the DataSource::Lake match arm
-// above). Don't delete — it preserves the Pinet config wiring.
-#[allow(dead_code)]
+/// Lake streamer adapted to the `StreamerMessage` type the handlers use.
+///
+/// `near-lake-framework` 0.7 is pinned to `near-indexer-primitives` 0.34, while
+/// `blocksapi` (and so our handlers) are on 0.37. The two `StreamerMessage` types
+/// are distinct to the compiler but share the same serde shape (Lake reads blocks
+/// as JSON in the first place), so each block goes through a JSON round-trip.
+/// Drop this once near-lake-framework ships on the same primitives as blocksapi.
+fn lake_streamer(
+    lake_config: near_lake_framework::LakeConfig,
+) -> (
+    tokio::task::JoinHandle<anyhow::Result<()>>,
+    tokio::sync::mpsc::Receiver<StreamerMessage>,
+) {
+    let (lake_handle, mut lake_stream) = near_lake_framework::streamer(lake_config);
+    let (sender, receiver) = tokio::sync::mpsc::channel(LAKE_CONVERTED_BUFFER);
+    let converter_handle = tokio::spawn(async move {
+        while let Some(lake_message) = lake_stream.recv().await {
+            let message: StreamerMessage =
+                serde_json::from_value(serde_json::to_value(&lake_message)?)?;
+            if sender.send(message).await.is_err() {
+                // Consumer is gone (reconnect or shutdown). Returning drops
+                // `lake_stream`, which stops the Lake task as well.
+                return Ok(());
+            }
+        }
+        // Lake closed its channel: surface its own result (error or clean end).
+        lake_handle.await?
+    });
+    (converter_handle, receiver)
+}
+
 async fn build_lake_config(
     config: &AppConfig,
     start_block: u64,
