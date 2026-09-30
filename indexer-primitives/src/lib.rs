@@ -51,6 +51,14 @@ pub struct EventJson {
 
 #[cfg_attr(feature = "clickhouse", derive(clickhouse::Row))]
 #[derive(Serialize)]
+pub struct BlockRow {
+    pub block_height: u64,
+    pub block_timestamp: u64,
+    pub block_hash: String,
+}
+
+#[cfg_attr(feature = "clickhouse", derive(clickhouse::Row))]
+#[derive(Serialize)]
 pub struct TransactionRow {
     pub block_height: u64,
     pub block_timestamp: u64,

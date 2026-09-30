@@ -45,7 +45,7 @@ indexer-clickhouse    indexer-explorer
 
 ### ClickHouse
 Source of truth for ClickHouse schema: `clickhouse/init/*.sql`
-- `01-core-tables.sql` — events, transactions, receipts, execution_outcomes
+- `01-core-tables.sql` — events, transactions, receipts, execution_outcomes, blocks (`blocks` is ordered by `block_timestamp` for time→block lookups; not backfilled, starts 2026-09 rollout)
 - `02-silver-tables.sql` — silver layer tables + materialized views + staging tables + unified views
 - `03-gold-views.sql` — gold_view_intents_metrics
 

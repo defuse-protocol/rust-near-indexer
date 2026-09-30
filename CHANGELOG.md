@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **`blocks` table** in ClickHouse: one row per indexed block
+  (`block_height`, `block_timestamp`, `block_hash`), ordered by
+  `block_timestamp` for fast time→block lookups. Written in both normal and
+  `--events-only` mode, after the block's other rows. No backfill.
+  Operators must create the table before deploying — see
+  `docs/migrations/2026-09-blocks-table.md`.
+
 ## [0.5.1] - 2026-05-12
 
 ### Fixed

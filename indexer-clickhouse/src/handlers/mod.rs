@@ -13,6 +13,8 @@ mod events;
 mod receipts_and_outcomes;
 mod transactions;
 
+const BLOCKS_CLICKHOUSE_TABLE: &str = "blocks";
+
 pub async fn handle_stream(
     stream: tokio::sync::mpsc::Receiver<StreamerMessage>,
     client: Client,
@@ -126,6 +128,14 @@ async fn handle_streamer_message(
     } else {
         events_future.await?;
     }
+
+    // Written last, so a row in `blocks` also means the block was fully processed.
+    let block_row = indexer_primitives::BlockRow {
+        block_height,
+        block_timestamp: message.block.header.timestamp,
+        block_hash: message.block.header.hash.to_string(),
+    };
+    crate::database::insert_rows(client, BLOCKS_CLICKHOUSE_TABLE, &[block_row]).await?;
 
     indexer_common::metrics::LATEST_BLOCK_HEIGHT.set(block_height as i64);
     indexer_common::metrics::BLOCK_PROCESSED_TOTAL.inc();
