@@ -12,7 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   (`block_height`, `block_timestamp`, `block_hash`), keyed by
   `block_height` with minmax/bloom indexes for fast lookup by timestamp or
   hash. Written in both normal and
-  `--events-only` mode, after the block's other rows. No backfill.
+  `--events-only` mode, in parallel with the block's other inserts. No backfill.
   Operators must create the table before deploying — see
   `docs/migrations/2026-09-blocks-table.md`.
 
