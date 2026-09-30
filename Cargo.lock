@@ -3178,6 +3178,7 @@ dependencies = [
  "indexer-primitives",
  "near-lake-framework",
  "serde",
+ "serde_json",
  "tokio",
  "tokio-retry",
  "tokio-stream",

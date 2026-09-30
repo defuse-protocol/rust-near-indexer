@@ -16,6 +16,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Operators must create the table before deploying — see
   `docs/migrations/2026-09-blocks-table.md`.
 
+### Fixed
+
+- **Lake data source (`DATA_SOURCE=lake`, used for Pinet) works again.** It
+  had been disabled with a hard `bail!` since 0.5.0, because
+  `near-lake-framework` 0.7 is still on `near-indexer-primitives` 0.34 while
+  `blocksapi` moved on (now 0.37), and the two `StreamerMessage` types don't
+  unify. Lake blocks are now converted to the 0.37 type through a JSON
+  round-trip in a small forwarding task (`lake_streamer` in
+  `indexer-clickhouse/src/main.rs`). Lake also joins the reconnect loop:
+  transient producer errors resume from the last processed block. Decode
+  errors (`serde_json::Error`) are fatal instead of retried, since retrying
+  would fail on the same block forever.
+
 ## [0.5.1] - 2026-05-12
 
 ### Fixed
