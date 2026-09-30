@@ -13,6 +13,8 @@ mod events;
 mod receipts_and_outcomes;
 mod transactions;
 
+const BLOCKS_CLICKHOUSE_TABLE: &str = "blocks";
+
 pub async fn handle_stream(
     stream: tokio::sync::mpsc::Receiver<StreamerMessage>,
     client: Client,
@@ -104,6 +106,13 @@ async fn handle_streamer_message(
         .await?;
     }
 
+    let block_rows = [indexer_primitives::BlockRow {
+        block_height,
+        block_timestamp: message.block.header.timestamp,
+        block_hash: message.block.header.hash.to_string(),
+    }];
+    let blocks_future = crate::database::insert_rows(client, BLOCKS_CLICKHOUSE_TABLE, &block_rows);
+
     let events_future = events::handle_events(
         &message,
         client,
@@ -121,10 +130,10 @@ async fn handle_streamer_message(
             accounts,
         );
 
-        // Run receipts+outcomes and events in parallel
-        tokio::try_join!(receipts_and_outcomes_future, events_future)?;
+        // Run receipts+outcomes, events and the block row in parallel
+        tokio::try_join!(receipts_and_outcomes_future, events_future, blocks_future)?;
     } else {
-        events_future.await?;
+        tokio::try_join!(events_future, blocks_future)?;
     }
 
     indexer_common::metrics::LATEST_BLOCK_HEIGHT.set(block_height as i64);
