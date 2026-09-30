@@ -5,8 +5,8 @@
 ## Context
 
 The ClickHouse indexer now writes one row per block (`block_height`,
-`block_timestamp`, `block_hash`) into `blocks`, so "which block was at time T"
-is a cheap primary-key lookup. No backfill: the table starts at whatever block
+`block_timestamp`, `block_hash`) into `blocks`, keyed by height, so a block can
+be found cheaply by height (primary key), timestamp (minmax) or hash (bloom). No backfill: the table starts at whatever block
 the new build indexes first.
 
 ## Must run BEFORE deploying the new binary
@@ -20,11 +20,11 @@ CREATE TABLE IF NOT EXISTS blocks (
     block_height         UInt64 COMMENT 'The height of the block',
     block_timestamp      DateTime64(9, 'UTC') COMMENT 'The timestamp of the block in UTC',
     block_hash           String COMMENT 'The hash of the block',
-    INDEX block_height_minmax_idx block_height TYPE minmax GRANULARITY 1,
+    INDEX block_timestamp_minmax_idx block_timestamp TYPE minmax GRANULARITY 1,
     INDEX block_hash_bloom_idx block_hash TYPE bloom_filter() GRANULARITY 1
 ) ENGINE = ReplacingMergeTree
-PRIMARY KEY (block_timestamp, block_height)
-ORDER BY (block_timestamp, block_height)
+PRIMARY KEY (block_height)
+ORDER BY (block_height)
 SETTINGS index_granularity = 8192;
 ```
 

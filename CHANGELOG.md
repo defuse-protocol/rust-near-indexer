@@ -9,8 +9,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Added
 
 - **`blocks` table** in ClickHouse: one row per indexed block
-  (`block_height`, `block_timestamp`, `block_hash`), ordered by
-  `block_timestamp` for fast time→block lookups. Written in both normal and
+  (`block_height`, `block_timestamp`, `block_hash`), keyed by
+  `block_height` with minmax/bloom indexes for fast lookup by timestamp or
+  hash. Written in both normal and
   `--events-only` mode, after the block's other rows. No backfill.
   Operators must create the table before deploying — see
   `docs/migrations/2026-09-blocks-table.md`.

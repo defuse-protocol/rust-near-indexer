@@ -86,17 +86,17 @@ ORDER BY (block_height, execution_outcome_id)
 SETTINGS index_granularity = 8192;
 
 
--- One row per indexed block. Sorted by timestamp so "which block was at time T"
--- is a primary-key range scan; height lookups go through the minmax index, which
--- is exact in practice since height and timestamp grow together.
+-- One row per indexed block, keyed by height (a height maps to exactly one block).
+-- Height and timestamp grow together, so the timestamp minmax index pins a
+-- time lookup to one granule just like the primary key does for height.
 -- Not backfilled: holds only blocks indexed since this table was introduced.
 CREATE TABLE IF NOT EXISTS blocks (
     block_height         UInt64 COMMENT 'The height of the block',
     block_timestamp      DateTime64(9, 'UTC') COMMENT 'The timestamp of the block in UTC',
     block_hash           String COMMENT 'The hash of the block',
-    INDEX block_height_minmax_idx block_height TYPE minmax GRANULARITY 1,
+    INDEX block_timestamp_minmax_idx block_timestamp TYPE minmax GRANULARITY 1,
     INDEX block_hash_bloom_idx block_hash TYPE bloom_filter() GRANULARITY 1
 ) ENGINE = ReplacingMergeTree
-PRIMARY KEY (block_timestamp, block_height)
-ORDER BY (block_timestamp, block_height)
+PRIMARY KEY (block_height)
+ORDER BY (block_height)
 SETTINGS index_granularity = 8192;
