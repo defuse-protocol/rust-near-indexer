@@ -145,7 +145,7 @@ cargo run --release --bin near-defuse-indexer
 ```
 
 ## Vendored patches
-`patches/near-crypto` overrides crates.io `near-crypto` 0.37.1 through `[patch.crates-io]`. Its only change is relaxing nearcore's `aws-lc-rs = "=1.16.2"` pin, which blocked `rustls-webpki` 0.103.16 (RUSTSEC-2026-0382). On a nearcore/blocksapi bump, check whether upstream now ships `aws-lc-rs >= 1.18` and drop the patch if so (steps in `patches/README.md`). Note that `cargo update -p <crate>` gives no error when a pin blocks it. Use `--precise <ver> --dry-run` to see the conflict.
+`patches/near-crypto` overrides crates.io `near-crypto` 0.37.1 through `[patch.crates-io]`. It has two edits: nearcore's `aws-lc-rs = "=1.16.2"` pin is relaxed to `1.18` (the pin blocked `rustls-webpki` 0.103.16, RUSTSEC-2026-0382), and `src/signature.rs` imports ML-DSA from the stabilized `aws_lc_rs::signature` path, as nearcore master does. On a nearcore/blocksapi bump, check whether upstream now ships `aws-lc-rs >= 1.18` and drop the patch if so (steps in `patches/README.md`). Note that `cargo update -p <crate>` gives no error when a pin blocks it. Use `--precise <ver> --dry-run` to see the conflict.
 
 ## Conventions
 - No tests exist yet

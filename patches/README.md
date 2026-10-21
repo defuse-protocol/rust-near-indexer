@@ -28,4 +28,7 @@ relaxing it is safe here.
 **Remove when** a nearcore 2.13.x (or the release `blocksapi` moves to) ships
 `aws-lc-rs >= 1.18`. nearcore master already pins `=1.18.1`. To remove: drop
 the `[patch.crates-io]` entry, delete this directory, run `cargo update -p near-crypto`,
-and confirm that `cargo tree -i rustls-webpki` still shows >= 0.103.16.
+and confirm that every 0.103.x `rustls-webpki` entry is >= 0.103.16:
+`grep -A1 'name = "rustls-webpki"' Cargo.lock`. Bare `cargo tree -i rustls-webpki`
+errors as ambiguous while 0.101.7 is also in the lock (it comes from aws-sdk-s3
+through near-lake-framework and is unused at runtime, see CHANGELOG).
