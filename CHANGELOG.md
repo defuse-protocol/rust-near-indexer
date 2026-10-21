@@ -16,6 +16,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Operators must create the table before deploying — see
   `docs/migrations/2026-09-blocks-table.md`.
 
+### Security
+
+- **RUSTSEC-2026-0382** (leaked eMudhra intermediate CA keys): `rustls-webpki`
+  0.103.13 → 0.103.16, `webpki-roots` → 1.0.10. Getting there required
+  vendoring `near-crypto` 0.37.1 under `patches/` with its `aws-lc-rs = "=1.16.2"`
+  pin relaxed to `1.18`. The pin comes from nearcore 2.13.x and blocked the
+  bump (see `patches/README.md`). `rustls-webpki` 0.101.7 stays in the
+  build, pulled in by aws-sdk-s3's default `rustls` feature through
+  `near-lake-framework`, but it never runs: `behavior-version-latest` makes
+  the AWS SDK use its rustls 0.23 client.
+
 ### Fixed
 
 - **Lake data source (`DATA_SOURCE=lake`, used for Pinet) works again.** It

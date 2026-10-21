@@ -144,6 +144,9 @@ ACCOUNTS_OF_INTEREST=intents.far \
 cargo run --release --bin near-defuse-indexer
 ```
 
+## Vendored patches
+`patches/near-crypto` overrides crates.io `near-crypto` 0.37.1 through `[patch.crates-io]`. It has two edits: nearcore's `aws-lc-rs = "=1.16.2"` pin is relaxed to `1.18` (the pin blocked `rustls-webpki` 0.103.16, RUSTSEC-2026-0382), and `src/signature.rs` imports ML-DSA from the stabilized `aws_lc_rs::signature` path, as nearcore master does. On a nearcore/blocksapi bump, check whether upstream now ships `aws-lc-rs >= 1.18` and drop the patch if so (steps in `patches/README.md`). Note that `cargo update -p <crate>` gives no error when a pin blocks it. Use `--precise <ver> --dry-run` to see the conflict.
+
 ## Conventions
 - No tests exist yet
 - Env config via clap: `CommonConfig` in `indexer-common/src/config.rs` holds all shared fields (block range, Redis, metrics, OTel, concurrency). BlocksAPI fields are defined directly in each binary's `AppConfig` (not in `CommonConfig`). Each binary's `AppConfig` uses `#[clap(flatten)] pub common: CommonConfig` plus data-source and DB-specific fields. Shared fields accessed as `config.common.field`.
