@@ -116,6 +116,7 @@ pub enum Action {
     DeterministicStateInit(Box<near_primitives::action::DeterministicStateInitAction>),
     TransferToGasKey(Box<near_primitives::action::TransferToGasKeyAction>),
     WithdrawFromGasKey(Box<near_primitives::action::WithdrawFromGasKeyAction>),
+    UniversalStateInit(Box<near_primitives::action::UniversalStateInitAction>),
 }
 
 /// Denormalized row for silver-level DIP-4 transfer data.
@@ -169,6 +170,7 @@ impl TryFrom<&near_primitives::views::ActionView> for Action {
             }
             near_primitives::action::Action::TransferToGasKey(a) => Action::TransferToGasKey(a),
             near_primitives::action::Action::WithdrawFromGasKey(a) => Action::WithdrawFromGasKey(a),
+            near_primitives::action::Action::UniversalStateInit(a) => Action::UniversalStateInit(a),
         })
     }
 }

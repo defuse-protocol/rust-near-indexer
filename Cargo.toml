@@ -10,14 +10,14 @@ resolver = "3"
 [workspace.package]
 version = "0.5.1"
 edition = "2024"
-rust-version = "1.90.0"
+rust-version = "1.95.0"
 
 [workspace.dependencies]
 # Shared across crates
 actix-web = "4.5.1"
 actix-web-httpauth = "0.8.2"
 anyhow = "1.0.51"
-blocksapi = { git = "https://github.com/defuse-protocol/blocksapi-rs.git", tag = "v0.2.4" }
+blocksapi = { git = "https://github.com/defuse-protocol/blocksapi-rs.git", tag = "v0.2.5" }
 clap = { version = "4.5", features = ["derive", "env"] }
 dotenv = "0.15.0"
 futures = "0.3.5"
@@ -37,12 +37,14 @@ tracing = "0.1.13"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-opentelemetry = "0.20.0"
 chrono = "0.4"
-sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres", "bigdecimal", "migrate", "chrono"] }
+sqlx = { version = "0.9", features = ["runtime-tokio", "tls-rustls", "postgres", "bigdecimal", "migrate", "chrono"] }
 
 # Internal crates
 indexer-primitives = { path = "indexer-primitives" }
 indexer-common = { path = "indexer-common" }
 
-# RUSTSEC-2026-0382: see patches/README.md. Drop once nearcore ships aws-lc-rs >= 1.18 on 2.13.x.
-[patch.crates-io]
-near-crypto = { path = "patches/near-crypto" }
+# macOS 27's `strip` corrupts proc-macro dylibs ("mis-aligned LINKEDIT string pool"),
+# so release builds fail to dlopen sqlx-macros. Proc macros and build scripts only;
+# the shipped binaries are still stripped.
+[profile.release.build-override]
+strip = "none"

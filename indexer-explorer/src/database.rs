@@ -161,7 +161,8 @@ async fn create_partitions_for_rows(
             partition_name,
         );
 
-        sqlx::query(&ddl).execute(pool).await?;
+        // Safe: only validated integers are interpolated above.
+        sqlx::query(sqlx::AssertSqlSafe(ddl)).execute(pool).await?;
     }
 
     Ok(())
